@@ -109,37 +109,40 @@ _write_env() {
   } > "$ENV_FILE"
 }
 
-_check_one() {
-  local name="$1" code="$2"
-  case "$code" in
-    200) printf "  ✓ %-28s ready\n" "$name" ;;
-    429) printf "  ~ %-28s needs quota\n" "$name" ;;
-    401|403) printf "  ✗ %-28s auth failed (%s)\n" "$name" "$code" ;;
-    404) printf "  ✗ %-28s not enabled\n" "$name" ;;
-    *)   printf "  ? %-28s HTTP %s\n" "$name" "$code" ;;
+_probe_http() {
+  curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$@" 2>/dev/null || echo "000"
+}
+
+_status_label() {
+  case "$1" in
+    200) echo "✓ Ready" ;;
+    429) echo "~ Needs quota" ;;
+    401|403) echo "✗ Auth failed" ;;
+    404) echo "✗ Not enabled" ;;
+    000) echo "✗ No response" ;;
+    skip:*) echo "- ${1#skip:}" ;;
+    *)   echo "? HTTP $1" ;;
   esac
 }
 
 _check() {
-  echo ""
-  echo "  cc check — provider connectivity"
-  echo "  ────────────────────────────────────────"
+  # Collect results into arrays
+  local names=() statuses=()
 
   # teams
-  printf "  - %-28s OAuth (use 'claude' to verify)\n" "teams"
+  names+=("teams"); statuses+=("skip:OAuth (use 'claude')")
 
   # direct
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     local code
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-      https://api.anthropic.com/v1/messages \
+    code=$(_probe_http https://api.anthropic.com/v1/messages \
       -H "x-api-key: ${ANTHROPIC_API_KEY}" \
       -H "anthropic-version: 2023-06-01" \
       -H "content-type: application/json" \
       -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-    _check_one "direct" "$code"
+    names+=("direct"); statuses+=("$code")
   else
-    printf "  - %-28s skipped (no API key)\n" "direct"
+    names+=("direct"); statuses+=("skip:No API key")
   fi
 
   # bedrock
@@ -150,13 +153,13 @@ _check() {
       --model-id us.anthropic.claude-opus-4-6-v1 \
       --content-type "application/json" --accept "application/json" \
       --body "$body" "$tmpfile" >/dev/null 2>&1; then
-      printf "  ✓ %-28s ready\n" "bedrock"
+      names+=("bedrock"); statuses+=("200")
     else
-      printf "  ✗ %-28s failed\n" "bedrock"
+      names+=("bedrock"); statuses+=("000")
     fi
     rm -f "$tmpfile"
   else
-    printf "  - %-28s skipped (no aws CLI)\n" "bedrock"
+    names+=("bedrock"); statuses+=("skip:No aws CLI")
   fi
 
   # vertex — probe multiple models
@@ -167,15 +170,15 @@ _check() {
     local vtx_region="us-east5"
     local vtx_model code
     for vtx_model in claude-opus-4-6 claude-sonnet-4-6 claude-opus-4-5@20251101 claude-haiku-4-5@20251001; do
-      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+      code=$(_probe_http \
         "https://${vtx_region}-aiplatform.googleapis.com/v1/projects/${vtx_project}/locations/${vtx_region}/publishers/anthropic/models/${vtx_model}:streamRawPredict" \
         -H "Authorization: Bearer ${vtx_token}" \
         -H "Content-Type: application/json" \
         -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-      _check_one "vertex:${vtx_model%%@*}" "$code"
+      names+=("vertex:${vtx_model%%@*}"); statuses+=("$code")
     done
   else
-    printf "  - %-28s skipped (no gcloud auth)\n" "vertex"
+    names+=("vertex"); statuses+=("skip:No gcloud auth")
   fi
 
   # foundry
@@ -183,15 +186,28 @@ _check() {
   local fnd_key="${AZURE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
   if [[ -n "$fnd_endpoint" && -n "$fnd_key" ]]; then
     local code
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-      "${fnd_endpoint}" \
+    code=$(_probe_http "${fnd_endpoint}" \
       -H "api-key: ${fnd_key}" \
       -H "content-type: application/json" \
       -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-    _check_one "foundry" "$code"
+    names+=("foundry"); statuses+=("$code")
   else
-    printf "  - %-28s skipped (no endpoint/key)\n" "foundry"
+    names+=("foundry"); statuses+=("skip:No endpoint/key")
   fi
+
+  # Render table
+  local nw=28 sw=32
+  echo ""
+  printf "  ┌─%-${nw}s─┬─%-${sw}s─┐\n" "$(printf '%0.s─' $(seq 1 $nw))" "$(printf '%0.s─' $(seq 1 $sw))"
+  printf "  │ %-${nw}s │ %-${sw}s │\n" "Provider" "Status"
+  printf "  ├─%-${nw}s─┼─%-${sw}s─┤\n" "$(printf '%0.s─' $(seq 1 $nw))" "$(printf '%0.s─' $(seq 1 $sw))"
+  local i
+  for i in "${!names[@]}"; do
+    local label
+    label=$(_status_label "${statuses[$i]}")
+    printf "  │ %-${nw}s │ %-${sw}s │\n" "${names[$i]}" "$label"
+  done
+  printf "  └─%-${nw}s─┴─%-${sw}s─┘\n" "$(printf '%0.s─' $(seq 1 $nw))" "$(printf '%0.s─' $(seq 1 $sw))"
   echo ""
 }
 
