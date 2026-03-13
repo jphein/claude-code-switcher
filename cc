@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: direct | bedrock | vertex | foundry | opus | opus45 | sonnet45 | sonnet | haiku | status | help
+# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | status | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -101,6 +101,10 @@ _write_env() {
       direct)
         : # Uses ANTHROPIC_API_KEY already in env — no extra vars needed
         ;;
+      teams)
+        # OAuth-based Claude Teams — clear API key so Claude Code uses browser login
+        echo "unset ANTHROPIC_API_KEY"
+        ;;
     esac
   } > "$ENV_FILE"
 }
@@ -112,6 +116,7 @@ _status() {
   echo ""
   echo "  ╔══ Claude Code Backend ══════════════════╗"
   case "$provider" in
+    teams)   echo "  ║  Provider : Claude Teams (OAuth)        ║" ;;
     direct)  echo "  ║  Provider : Direct Anthropic API        ║" ;;
     bedrock) echo "  ║  Provider : Amazon Bedrock (us-west-1)  ║" ;;
     vertex)  echo "  ║  Provider : Google Vertex AI            ║" ;;
@@ -126,7 +131,7 @@ _status() {
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
-  echo "  Providers : cc direct | bedrock | vertex | foundry"
+  echo "  Providers : cc teams | direct | bedrock | vertex | foundry"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo ""
 }
@@ -135,7 +140,7 @@ _status() {
 CMD="${1:-status}"
 
 case "$CMD" in
-  direct|bedrock|vertex|foundry)
+  teams|direct|bedrock|vertex|foundry)
     provider="$CMD"
     model=$(_opus_model "$provider")
     echo "$provider" > "$ACTIVE_FILE"
@@ -192,7 +197,8 @@ case "$CMD" in
     echo "  cc — Claude Code backend switcher"
     echo ""
     echo "  PROVIDERS"
-    echo "    cc direct     Direct Anthropic API (Teams account)  [default]"
+    echo "    cc teams      Claude Teams (OAuth browser login)  [default]"
+    echo "    cc direct     Direct Anthropic API (API key)"
     echo "    cc bedrock    Amazon Bedrock (us-west-1)"
     echo "    cc vertex     Google Vertex AI"
     echo "    cc foundry    Azure AI Foundry"
