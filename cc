@@ -219,7 +219,13 @@ _status() {
   echo ""
   echo "  Providers : cc teams | direct | bedrock | vertex | foundry"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
+  echo "  Diagnose  : cc check"
   echo ""
+}
+
+_status_full() {
+  _status
+  _check
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
