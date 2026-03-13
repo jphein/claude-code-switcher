@@ -78,6 +78,7 @@ _write_env() {
   {
     echo "# Claude Code active backend: ${provider} ($(date '+%Y-%m-%d %H:%M'))"
     echo "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX ANTHROPIC_BASE_URL"
+    echo "export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1  # Let shell set title (for hostname-in-title)"
     case "$provider" in
       bedrock)
         echo "export CLAUDE_CODE_USE_BEDROCK=1"
