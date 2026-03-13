@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# cc-test — test all cc modes: provider switches, model tiers, status, help
+# Does NOT connect to any API — tests only local state (env.sh, active-backend, settings.json)
+
+CC="${HOME}/bin/cc"
+ACTIVE_FILE="${HOME}/.config/claude-code/active-backend"
+ENV_FILE="${HOME}/.config/claude-code/env.sh"
+SETTINGS="${HOME}/.claude/settings.json"
+
+PASS=0; FAIL=0
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+ok()   { echo "  PASS  $1"; ((PASS++)); }
+fail() { echo "  FAIL  $1"; ((FAIL++)); }
+
+check() {
+  local desc="$1" expected="$2" actual="$3"
+  if [[ "$actual" == *"$expected"* ]]; then ok "$desc"; else fail "$desc  (expected: '$expected', got: '$actual')"; fi
+}
+
+active()  { cat "$ACTIVE_FILE" 2>/dev/null; }
+model()   { python3 -c "import json; print(json.load(open('${SETTINGS}'))['model'])" 2>/dev/null; }
+envgrep() { grep -s "$1" "$ENV_FILE"; }
+
+# Snapshot current state so we can restore it after the tests
+ORIGINAL_ACTIVE=$(active)
+ORIGINAL_MODEL=$(model)
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "cc-test — running all mode tests"
+echo "────────────────────────────────────────────────────"
+
+# -- cc bedrock ---------------------------------------------------------------
+echo ""
+echo "[ cc bedrock ]"
+"$CC" bedrock >/dev/null
+check "active-backend = bedrock"         "bedrock"                       "$(active)"
+check "env.sh: CLAUDE_CODE_USE_BEDROCK"  "CLAUDE_CODE_USE_BEDROCK=1"     "$(envgrep CLAUDE_CODE_USE_BEDROCK)"
+check "env.sh: AWS_REGION"               "AWS_REGION=us-west-1"          "$(envgrep AWS_REGION)"
+check "env.sh: unset line present"        "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX"  "$(envgrep unset)"
+check "settings.json: opus model"        "opus"                          "$(model)"
+
+# -- cc vertex ----------------------------------------------------------------
+echo ""
+echo "[ cc vertex ]"
+"$CC" vertex >/dev/null
+check "active-backend = vertex"          "vertex"                        "$(active)"
+check "env.sh: CLAUDE_CODE_USE_VERTEX"   "CLAUDE_CODE_USE_VERTEX=1"      "$(envgrep CLAUDE_CODE_USE_VERTEX)"
+check "env.sh: CLOUD_ML_REGION"          "CLOUD_ML_REGION=us-west1"      "$(envgrep CLOUD_ML_REGION)"
+check "settings.json: opus model"        "opus"                          "$(model)"
+
+# -- cc foundry ---------------------------------------------------------------
+echo ""
+echo "[ cc foundry ]"
+"$CC" foundry >/dev/null
+check "active-backend = foundry"         "foundry"                       "$(active)"
+check "env.sh: ANTHROPIC_BASE_URL"       "ANTHROPIC_BASE_URL"            "$(envgrep ANTHROPIC_BASE_URL)"
+check "settings.json: opus model"        "opus"                          "$(model)"
+
+# -- cc direct ----------------------------------------------------------------
+echo ""
+echo "[ cc direct ]"
+"$CC" direct >/dev/null
+check "active-backend = direct"          "direct"                        "$(active)"
+# direct writes no provider vars — only the unset line
+check "env.sh: no BEDROCK var"           ""  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')"   # should be empty
+[[ -z "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')" ]] && ok "env.sh: no BEDROCK export" || fail "env.sh: BEDROCK still exported"
+[[ -z "$(envgrep 'CLAUDE_CODE_USE_VERTEX=1')" ]]  && ok "env.sh: no VERTEX export"  || fail "env.sh: VERTEX still exported"
+check "settings.json: opus model"        "opus"                          "$(model)"
+
+# -- cc opus (on direct) ------------------------------------------------------
+echo ""
+echo "[ cc opus ]"
+"$CC" opus >/dev/null
+check "settings.json: opus"             "opus"                           "$(model)"
+check "active-backend unchanged"        "direct"                         "$(active)"
+
+# -- cc sonnet (on direct) ----------------------------------------------------
+echo ""
+echo "[ cc sonnet ]"
+"$CC" sonnet >/dev/null
+check "settings.json: sonnet"           "sonnet"                         "$(model)"
+check "active-backend unchanged"        "direct"                         "$(active)"
+
+# -- cc sonnet on bedrock (cross-check model IDs) -----------------------------
+echo ""
+echo "[ cc bedrock + cc sonnet ]"
+"$CC" bedrock >/dev/null
+"$CC" sonnet  >/dev/null
+check "bedrock sonnet model ID"         "us.anthropic.claude-sonnet"     "$(model)"
+
+# -- cc opus back on bedrock --------------------------------------------------
+"$CC" opus >/dev/null
+check "bedrock opus model ID"           "us.anthropic.claude-opus"       "$(model)"
+
+# -- cc status ----------------------------------------------------------------
+echo ""
+echo "[ cc status ]"
+STATUS_OUT=$("$CC" status 2>&1)
+EXIT=$?
+[[ $EXIT -eq 0 ]] && ok "exit 0" || fail "exit $EXIT"
+check "shows Provider"  "Provider"  "$STATUS_OUT"
+check "shows Model"     "Model"     "$STATUS_OUT"
+
+# -- cc help ------------------------------------------------------------------
+echo ""
+echo "[ cc help ]"
+HELP_OUT=$("$CC" help 2>&1)
+EXIT=$?
+[[ $EXIT -eq 0 ]] && ok "exit 0" || fail "exit $EXIT"
+check "shows PROVIDERS"         "PROVIDERS"         "$HELP_OUT"
+check "shows MODEL TIER"        "MODEL TIER"        "$HELP_OUT"
+check "shows RATE LIMIT"        "RATE LIMIT"        "$HELP_OUT"
+
+# -- cc <unknown> -------------------------------------------------------------
+echo ""
+echo "[ cc unknown ]"
+"$CC" __no_such_cmd__ 2>/dev/null
+[[ $? -ne 0 ]] && ok "exits non-zero on unknown cmd" || fail "should exit non-zero"
+
+# ── Restore original state ───────────────────────────────────────────────────
+
+echo ""
+echo "[ restore ]"
+if [[ -n "$ORIGINAL_ACTIVE" ]]; then
+  "$CC" "$ORIGINAL_ACTIVE" >/dev/null
+  # restore original model tier
+  if [[ "$ORIGINAL_MODEL" == *sonnet* ]]; then "$CC" sonnet >/dev/null
+  else "$CC" opus >/dev/null; fi
+  ok "restored to ${ORIGINAL_ACTIVE} / ${ORIGINAL_MODEL}"
+else
+  ok "nothing to restore"
+fi
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+TOTAL=$((PASS + FAIL))
+echo ""
+echo "────────────────────────────────────────────────────"
+echo "  ${PASS}/${TOTAL} passed   ${FAIL} failed"
+echo ""
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1
