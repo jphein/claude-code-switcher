@@ -5,15 +5,13 @@ Switch Claude Code between API providers and model tiers from the command line.
 ## Install
 
 ```bash
+git clone https://github.com/jphein/claude-code-switcher.git ~/Projects/claude-code-switcher
+cd ~/Projects/claude-code-switcher
 ./install.sh
+source ~/.bashrc
 ```
 
-Or manually:
-```bash
-ln -s "$(pwd)/cc" ~/bin/cc
-ln -s "$(pwd)/cc-test" ~/bin/cc-test
-ln -s "$(pwd)/cc-api-test" ~/bin/cc-api-test
-```
+This adds the project folder to your PATH.
 
 ## First-Time Setup
 
@@ -85,9 +83,10 @@ Back to primary?   -->  cc opus    -->  open new session
 
 ```
 ~/Projects/claude-code-switcher/
-    cc              Main script (symlinked to ~/bin/cc)
+    cc              Main script (added to PATH via install.sh)
     cc-test         Local state test suite (48 checks)
     cc-api-test     API connectivity test
+    install.sh      Adds project dir to PATH
     README.md       This doc
 
 ~/.config/claude-code/

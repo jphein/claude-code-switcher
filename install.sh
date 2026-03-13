@@ -1,37 +1,31 @@
 #!/bin/bash
-# Install cc (Claude Code switcher) to ~/bin
-
+# Install cc (Claude Code switcher) - adds project dir to PATH
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN_DIR="${HOME}/bin"
+BASHRC="$HOME/.bashrc"
+ZSHRC="$HOME/.zshrc"
 
-# Create ~/bin if needed
-mkdir -p "$BIN_DIR"
+PATH_LINE="export PATH=\"${SCRIPT_DIR}:\$PATH\""
 
-# Symlink executables
-for cmd in cc cc-test cc-api-test; do
-    target="$BIN_DIR/$cmd"
-    if [ -L "$target" ] || [ -e "$target" ]; then
-        echo "Removing existing $target"
-        rm -f "$target"
+add_to_rc() {
+    local rc="$1"
+    if [[ -f "$rc" ]] && ! grep -qF "claude-code-switcher" "$rc" 2>/dev/null; then
+        echo "" >> "$rc"
+        echo "# Claude Code switcher" >> "$rc"
+        echo "$PATH_LINE" >> "$rc"
+        echo "Added to $rc"
+    elif [[ -f "$rc" ]]; then
+        echo "Already in $rc"
     fi
-    ln -s "$SCRIPT_DIR/$cmd" "$target"
-    echo "Linked $cmd -> $target"
-done
+}
 
-# Check if ~/bin is in PATH
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    echo ""
-    echo "Add ~/bin to your PATH by adding this to ~/.bashrc or ~/.zshrc:"
-    echo ""
-    echo '  export PATH="$HOME/bin:$PATH"'
-    echo ""
-fi
+add_to_rc "$BASHRC"
+add_to_rc "$ZSHRC"
 
 echo ""
 echo "Done! Next steps:"
-echo "  cc status         Verify installation"
-echo "  cc setup-bedrock  Configure AWS (if using Bedrock)"
-echo "  cc setup-vertex   Configure GCP (if using Vertex AI)"
-echo "  cc help           See all commands"
+echo "  source ~/.bashrc      (or open new terminal)"
+echo "  cc status             Verify installation"
+echo "  cc setup-bedrock      Configure AWS (if using Bedrock)"
+echo "  cc help               See all commands"
