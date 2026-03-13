@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | status | help
+# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | check | status | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -109,6 +109,92 @@ _write_env() {
   } > "$ENV_FILE"
 }
 
+_check_one() {
+  local name="$1" code="$2"
+  case "$code" in
+    200) printf "  ✓ %-28s ready\n" "$name" ;;
+    429) printf "  ~ %-28s needs quota\n" "$name" ;;
+    401|403) printf "  ✗ %-28s auth failed (%s)\n" "$name" "$code" ;;
+    404) printf "  ✗ %-28s not enabled\n" "$name" ;;
+    *)   printf "  ? %-28s HTTP %s\n" "$name" "$code" ;;
+  esac
+}
+
+_check() {
+  echo ""
+  echo "  cc check — provider connectivity"
+  echo "  ────────────────────────────────────────"
+
+  # teams
+  printf "  - %-28s OAuth (use 'claude' to verify)\n" "teams"
+
+  # direct
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+      https://api.anthropic.com/v1/messages \
+      -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+      -H "anthropic-version: 2023-06-01" \
+      -H "content-type: application/json" \
+      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+    _check_one "direct" "$code"
+  else
+    printf "  - %-28s skipped (no API key)\n" "direct"
+  fi
+
+  # bedrock
+  if command -v aws &>/dev/null; then
+    local body tmpfile="/tmp/cc-check-bedrock.json"
+    body=$(echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' | base64 -w0)
+    if aws bedrock-runtime invoke-model --region us-west-1 \
+      --model-id us.anthropic.claude-opus-4-6-v1 \
+      --content-type "application/json" --accept "application/json" \
+      --body "$body" "$tmpfile" >/dev/null 2>&1; then
+      printf "  ✓ %-28s ready\n" "bedrock"
+    else
+      printf "  ✗ %-28s failed\n" "bedrock"
+    fi
+    rm -f "$tmpfile"
+  else
+    printf "  - %-28s skipped (no aws CLI)\n" "bedrock"
+  fi
+
+  # vertex — probe multiple models
+  local vtx_token vtx_project
+  vtx_token=$("$GCLOUD" auth print-access-token 2>/dev/null || echo "")
+  vtx_project=$("$GCLOUD" config get-value project 2>/dev/null || echo "")
+  if [[ -n "$vtx_token" && -n "$vtx_project" ]]; then
+    local vtx_region="us-east5"
+    local vtx_model code
+    for vtx_model in claude-opus-4-6 claude-sonnet-4-6 claude-opus-4-5@20251101 claude-haiku-4-5@20251001; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+        "https://${vtx_region}-aiplatform.googleapis.com/v1/projects/${vtx_project}/locations/${vtx_region}/publishers/anthropic/models/${vtx_model}:streamRawPredict" \
+        -H "Authorization: Bearer ${vtx_token}" \
+        -H "Content-Type: application/json" \
+        -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+      _check_one "vertex:${vtx_model%%@*}" "$code"
+    done
+  else
+    printf "  - %-28s skipped (no gcloud auth)\n" "vertex"
+  fi
+
+  # foundry
+  local fnd_endpoint="${AZURE_FOUNDRY_ENDPOINT:-${ANTHROPIC_BASE_URL:-}}"
+  local fnd_key="${AZURE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+  if [[ -n "$fnd_endpoint" && -n "$fnd_key" ]]; then
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+      "${fnd_endpoint}" \
+      -H "api-key: ${fnd_key}" \
+      -H "content-type: application/json" \
+      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+    _check_one "foundry" "$code"
+  else
+    printf "  - %-28s skipped (no endpoint/key)\n" "foundry"
+  fi
+  echo ""
+}
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 _status() {
   local provider; provider=$(_active)
@@ -188,6 +274,10 @@ case "$CMD" in
     echo "  → Haiku 4.5 on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
+  check)
+    _check
+    ;;
+
   status|"")
     _status
     ;;
@@ -213,6 +303,7 @@ case "$CMD" in
     echo "  INFO"
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
+    echo "    cc check      Test connectivity for all providers"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
     echo "    Hit Opus limits?   →  cc opus45  →  open new session"

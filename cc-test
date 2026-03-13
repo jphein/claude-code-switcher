@@ -147,6 +147,17 @@ check "shows PROVIDERS"         "PROVIDERS"         "$HELP_OUT"
 check "shows MODEL TIER"        "MODEL TIER"        "$HELP_OUT"
 check "shows RATE LIMIT"        "RATE LIMIT"        "$HELP_OUT"
 check "shows teams"             "cc teams"          "$HELP_OUT"
+check "shows cc check"          "cc check"          "$HELP_OUT"
+
+# -- cc check -----------------------------------------------------------------
+echo ""
+echo "[ cc check ]"
+CHECK_OUT=$("$CC" check 2>&1)
+EXIT=$?
+[[ $EXIT -eq 0 ]] && ok "exit 0" || fail "exit $EXIT"
+check "shows teams"    "teams"    "$CHECK_OUT"
+check "shows bedrock"  "bedrock"  "$CHECK_OUT"
+check "shows vertex"   "vertex"   "$CHECK_OUT"
 
 # -- cc <unknown> -------------------------------------------------------------
 echo ""
