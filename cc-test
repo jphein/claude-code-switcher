@@ -19,6 +19,11 @@ check() {
   if [[ "$actual" == *"$expected"* ]]; then ok "$desc"; else fail "$desc  (expected: '$expected', got: '$actual')"; fi
 }
 
+check_empty() {
+  local desc="$1" actual="$2"
+  if [[ -z "$actual" ]]; then ok "$desc"; else fail "$desc  (expected empty, got: '$actual')"; fi
+}
+
 active()  { cat "$ACTIVE_FILE" 2>/dev/null; }
 model()   { python3 -c "import json; print(json.load(open('${SETTINGS}'))['model'])" 2>/dev/null; }
 envgrep() { grep -s "$1" "$ENV_FILE"; }
@@ -33,6 +38,16 @@ echo ""
 echo "cc-test — running all mode tests"
 echo "────────────────────────────────────────────────────"
 
+# -- cc teams -----------------------------------------------------------------
+echo ""
+echo "[ cc teams ]"
+"$CC" teams >/dev/null
+check "active-backend = teams"           "teams"                          "$(active)"
+check "env.sh: unsets ANTHROPIC_API_KEY" "unset ANTHROPIC_API_KEY"        "$(envgrep 'unset ANTHROPIC_API_KEY')"
+check_empty "env.sh: no BEDROCK export"  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')"
+check_empty "env.sh: no VERTEX export"   "$(envgrep 'CLAUDE_CODE_USE_VERTEX=1')"
+check "settings.json: opus model"        "opus"                           "$(model)"
+
 # -- cc bedrock ---------------------------------------------------------------
 echo ""
 echo "[ cc bedrock ]"
@@ -40,7 +55,7 @@ echo "[ cc bedrock ]"
 check "active-backend = bedrock"         "bedrock"                       "$(active)"
 check "env.sh: CLAUDE_CODE_USE_BEDROCK"  "CLAUDE_CODE_USE_BEDROCK=1"     "$(envgrep CLAUDE_CODE_USE_BEDROCK)"
 check "env.sh: AWS_REGION"               "AWS_REGION=us-west-1"          "$(envgrep AWS_REGION)"
-check "env.sh: unset line present"        "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX"  "$(envgrep unset)"
+check "env.sh: unset line present"       "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX"  "$(envgrep unset)"
 check "settings.json: opus model"        "opus"                          "$(model)"
 
 # -- cc vertex ----------------------------------------------------------------
@@ -65,63 +80,53 @@ echo ""
 echo "[ cc direct ]"
 "$CC" direct >/dev/null
 check "active-backend = direct"          "direct"                        "$(active)"
-# direct writes no provider vars — only the unset line
-check "env.sh: no BEDROCK var"           ""  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')"   # should be empty
-[[ -z "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')" ]] && ok "env.sh: no BEDROCK export" || fail "env.sh: BEDROCK still exported"
-[[ -z "$(envgrep 'CLAUDE_CODE_USE_VERTEX=1')" ]]  && ok "env.sh: no VERTEX export"  || fail "env.sh: VERTEX still exported"
+check_empty "env.sh: no BEDROCK export"  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')"
+check_empty "env.sh: no VERTEX export"   "$(envgrep 'CLAUDE_CODE_USE_VERTEX=1')"
 check "settings.json: opus model"        "opus"                          "$(model)"
 
-# -- cc opus (on direct) ------------------------------------------------------
+# -- model tiers on direct ----------------------------------------------------
 echo ""
-echo "[ cc opus ]"
+echo "[ model tiers on direct ]"
 "$CC" opus >/dev/null
-check "settings.json: opus"             "opus"                           "$(model)"
+check "opus"                            "opus"                           "$(model)"
 check "active-backend unchanged"        "direct"                         "$(active)"
-
-# -- cc opus45 (on direct) ----------------------------------------------------
-echo ""
-echo "[ cc opus45 ]"
 "$CC" opus45 >/dev/null
-check "settings.json: opus45"          "opus-4-5"                        "$(model)"
-check "active-backend unchanged"       "direct"                          "$(active)"
-
-# -- cc sonnet (on direct) ----------------------------------------------------
-echo ""
-echo "[ cc sonnet ]"
+check "opus45"                          "opus-4-5"                       "$(model)"
 "$CC" sonnet >/dev/null
-check "settings.json: sonnet"           "sonnet"                         "$(model)"
-check "active-backend unchanged"        "direct"                         "$(active)"
-
-# -- cc sonnet45 (on direct) --------------------------------------------------
-echo ""
-echo "[ cc sonnet45 ]"
+check "sonnet"                          "sonnet"                         "$(model)"
 "$CC" sonnet45 >/dev/null
-check "settings.json: sonnet45"        "sonnet-4-5"                      "$(model)"
-check "active-backend unchanged"       "direct"                          "$(active)"
-
-# -- cc haiku (on direct) -----------------------------------------------------
-echo ""
-echo "[ cc haiku ]"
+check "sonnet45"                        "sonnet-4-5"                     "$(model)"
 "$CC" haiku >/dev/null
-check "settings.json: haiku"           "haiku"                           "$(model)"
-check "active-backend unchanged"       "direct"                          "$(active)"
+check "haiku"                           "haiku"                          "$(model)"
+check "active-backend still direct"     "direct"                         "$(active)"
 
 # -- model IDs on bedrock (cross-check) ---------------------------------------
 echo ""
-echo "[ cc bedrock + model tiers ]"
+echo "[ model IDs on bedrock ]"
 "$CC" bedrock >/dev/null
+check "bedrock opus"                    "us.anthropic.claude-opus-4-6"   "$(model)"
 "$CC" opus45  >/dev/null
-check "bedrock opus45 model ID"         "us.anthropic.claude-opus-4-5"   "$(model)"
+check "bedrock opus45"                  "us.anthropic.claude-opus-4-5"   "$(model)"
 "$CC" sonnet  >/dev/null
-check "bedrock sonnet model ID"         "us.anthropic.claude-sonnet-4-6" "$(model)"
+check "bedrock sonnet"                  "us.anthropic.claude-sonnet-4-6" "$(model)"
 "$CC" sonnet45 >/dev/null
-check "bedrock sonnet45 model ID"       "us.anthropic.claude-sonnet-4-5" "$(model)"
+check "bedrock sonnet45"                "us.anthropic.claude-sonnet-4-5" "$(model)"
 "$CC" haiku >/dev/null
-check "bedrock haiku model ID"          "us.anthropic.claude-haiku"      "$(model)"
+check "bedrock haiku"                   "us.anthropic.claude-haiku"      "$(model)"
 
-# -- cc opus back on bedrock --------------------------------------------------
+# -- model tiers on teams -----------------------------------------------------
+echo ""
+echo "[ model tiers on teams ]"
+"$CC" teams >/dev/null
+"$CC" opus45 >/dev/null
+check "teams opus45"                    "claude-opus-4-5"                "$(model)"
+check "active-backend = teams"          "teams"                          "$(active)"
+"$CC" sonnet >/dev/null
+check "teams sonnet"                    "claude-sonnet-4-6"              "$(model)"
+"$CC" haiku >/dev/null
+check "teams haiku"                     "claude-haiku-4-5"               "$(model)"
 "$CC" opus >/dev/null
-check "bedrock opus model ID"           "us.anthropic.claude-opus"       "$(model)"
+check "teams opus"                      "claude-opus-4-6"                "$(model)"
 
 # -- cc status ----------------------------------------------------------------
 echo ""
@@ -141,6 +146,7 @@ EXIT=$?
 check "shows PROVIDERS"         "PROVIDERS"         "$HELP_OUT"
 check "shows MODEL TIER"        "MODEL TIER"        "$HELP_OUT"
 check "shows RATE LIMIT"        "RATE LIMIT"        "$HELP_OUT"
+check "shows teams"             "cc teams"          "$HELP_OUT"
 
 # -- cc <unknown> -------------------------------------------------------------
 echo ""
@@ -155,8 +161,13 @@ echo "[ restore ]"
 if [[ -n "$ORIGINAL_ACTIVE" ]]; then
   "$CC" "$ORIGINAL_ACTIVE" >/dev/null
   # restore original model tier
-  if [[ "$ORIGINAL_MODEL" == *sonnet* ]]; then "$CC" sonnet >/dev/null
-  else "$CC" opus >/dev/null; fi
+  case "$ORIGINAL_MODEL" in
+    *opus-4-5*)   "$CC" opus45   >/dev/null ;;
+    *sonnet-4-5*) "$CC" sonnet45 >/dev/null ;;
+    *sonnet*)     "$CC" sonnet   >/dev/null ;;
+    *haiku*)      "$CC" haiku    >/dev/null ;;
+    *)            "$CC" opus     >/dev/null ;;
+  esac
   ok "restored to ${ORIGINAL_ACTIVE} / ${ORIGINAL_MODEL}"
 else
   ok "nothing to restore"

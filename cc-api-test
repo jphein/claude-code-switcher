@@ -8,7 +8,7 @@ CC="${HOME}/bin/cc"
 ENV_FILE="${HOME}/.config/claude-code/env.sh"
 
 # Snapshot current state
-ORIGINAL_ACTIVE=$(cat ~/.config/claude-code/active-backend 2>/dev/null || echo "direct")
+ORIGINAL_ACTIVE=$(cat ~/.config/claude-code/active-backend 2>/dev/null || echo "teams")
 ORIGINAL_MODEL=$(python3 -c "import json; print(json.load(open('${HOME}/.claude/settings.json'))['model'])" 2>/dev/null || echo "")
 
 PASS=0; FAIL=0; SKIP=0
@@ -21,7 +21,6 @@ skip() { echo "  SKIP  $1"; ((SKIP++)) || true; }
 test_provider() {
   local provider="$1"
   local model="$2"
-  local extra_env="${3:-}"
 
   echo ""
   echo "[ $provider → $model ]"
@@ -30,12 +29,13 @@ test_provider() {
   "$CC" "$provider" >/dev/null 2>&1
   source "$ENV_FILE" 2>/dev/null || true
 
-  # Apply any extra env (for testing specific models)
-  eval "$extra_env" 2>/dev/null || true
-
   # Build curl command based on provider
   local response
   case "$provider" in
+    teams)
+      skip "OAuth requires browser login (cannot test via curl)"
+      return
+      ;;
     direct)
       if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
         skip "ANTHROPIC_API_KEY not set"
@@ -52,7 +52,6 @@ test_provider() {
         skip "aws CLI not installed"
         return
       fi
-      # Use AWS CLI to invoke bedrock (body must be base64)
       local body
       body=$(echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' | base64 -w0)
       local tmpfile="/tmp/cc-api-test-bedrock.json"
@@ -107,6 +106,8 @@ test_provider() {
   # Check response
   if echo "$response" | grep -qE '"stop_reason"|"type":"message"'; then
     ok "$provider API responded"
+  elif echo "$response" | grep -qi "quota\|RESOURCE_EXHAUSTED"; then
+    skip "$provider: quota exceeded (model accessible but no quota)"
   elif echo "$response" | grep -qi "error\|unauthorized\|forbidden\|AccessDenied"; then
     fail "$response"
   else
@@ -119,6 +120,7 @@ echo "cc-api-test — testing provider connectivity"
 echo "────────────────────────────────────────────────────"
 
 # Test each provider with default opus model
+test_provider "teams"   "claude-opus-4-6"
 test_provider "direct"  "claude-opus-4-6"
 test_provider "bedrock" "us.anthropic.claude-opus-4-6-v1"
 test_provider "vertex"  "claude-opus-4-6"
@@ -128,10 +130,13 @@ test_provider "foundry" "claude-opus-4-6"
 echo ""
 echo "[ restore ]"
 "$CC" "$ORIGINAL_ACTIVE" >/dev/null 2>&1
-if [[ "$ORIGINAL_MODEL" == *sonnet* ]]; then "$CC" sonnet >/dev/null 2>&1
-elif [[ "$ORIGINAL_MODEL" == *opus-4-5* ]]; then "$CC" opus45 >/dev/null 2>&1
-elif [[ "$ORIGINAL_MODEL" == *haiku* ]]; then "$CC" haiku >/dev/null 2>&1
-else "$CC" opus >/dev/null 2>&1; fi
+case "$ORIGINAL_MODEL" in
+  *opus-4-5*)   "$CC" opus45   >/dev/null 2>&1 ;;
+  *sonnet-4-5*) "$CC" sonnet45 >/dev/null 2>&1 ;;
+  *sonnet*)     "$CC" sonnet   >/dev/null 2>&1 ;;
+  *haiku*)      "$CC" haiku    >/dev/null 2>&1 ;;
+  *)            "$CC" opus     >/dev/null 2>&1 ;;
+esac
 echo "  restored to ${ORIGINAL_ACTIVE}"
 
 # Summary
