@@ -80,7 +80,8 @@ test_provider() {
         skip "gcloud auth not configured"
         return
       fi
-      local endpoint="https://${CLOUD_ML_REGION:-us-west1}-aiplatform.googleapis.com/v1/projects/${ANTHROPIC_VERTEX_PROJECT_ID}/locations/${CLOUD_ML_REGION:-us-west1}/publishers/anthropic/models/${model}:streamRawPredict"
+      local region="${CLOUD_ML_REGION:-us-east5}"
+      local endpoint="https://${region}-aiplatform.googleapis.com/v1/projects/${ANTHROPIC_VERTEX_PROJECT_ID}/locations/${region}/publishers/anthropic/models/${model}:streamRawPredict"
       response=$(curl -s --max-time 30 "$endpoint" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
@@ -120,7 +121,7 @@ echo "────────────────────────�
 # Test each provider with default opus model
 test_provider "direct"  "claude-opus-4-6"
 test_provider "bedrock" "us.anthropic.claude-opus-4-6-v1"
-test_provider "vertex"  "claude-opus-4@20250501"
+test_provider "vertex"  "claude-opus-4-6"
 test_provider "foundry" "claude-opus-4-6"
 
 # Restore original state

@@ -49,7 +49,7 @@ echo "[ cc vertex ]"
 "$CC" vertex >/dev/null
 check "active-backend = vertex"          "vertex"                        "$(active)"
 check "env.sh: CLAUDE_CODE_USE_VERTEX"   "CLAUDE_CODE_USE_VERTEX=1"      "$(envgrep CLAUDE_CODE_USE_VERTEX)"
-check "env.sh: CLOUD_ML_REGION"          "CLOUD_ML_REGION=us-west1"      "$(envgrep CLOUD_ML_REGION)"
+check "env.sh: CLOUD_ML_REGION"          "CLOUD_ML_REGION=us-east5"      "$(envgrep CLOUD_ML_REGION)"
 check "settings.json: opus model"        "opus"                          "$(model)"
 
 # -- cc foundry ---------------------------------------------------------------

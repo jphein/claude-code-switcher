@@ -14,7 +14,7 @@ mkdir -p "$CONFIG_DIR"
 _opus_model() {
   case "${1:-direct}" in
     bedrock) echo "us.anthropic.claude-opus-4-6-v1" ;;
-    vertex)  echo "claude-opus-4@20250501" ;;
+    vertex)  echo "claude-opus-4-6" ;;
     *)       echo "claude-opus-4-6" ;;   # direct, foundry
   esac
 }
@@ -30,7 +30,7 @@ _opus45_model() {
 _sonnet_model() {
   case "${1:-direct}" in
     bedrock) echo "us.anthropic.claude-sonnet-4-6-v1" ;;
-    vertex)  echo "claude-sonnet-4@20250501" ;;
+    vertex)  echo "claude-sonnet-4-6" ;;
     *)       echo "claude-sonnet-4-6" ;;  # direct, foundry
   esac
 }
@@ -87,7 +87,7 @@ _write_env() {
         local proj
         proj=$("$GCLOUD" config get-value project 2>/dev/null || echo "agentsforgood")
         echo "export CLAUDE_CODE_USE_VERTEX=1"
-        echo "export CLOUD_ML_REGION=us-west1"
+        echo "export CLOUD_ML_REGION=us-east5"
         echo "export ANTHROPIC_VERTEX_PROJECT_ID=${proj}"
         ;;
       foundry)
