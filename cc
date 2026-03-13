@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: direct | bedrock | vertex | foundry | sonnet | opus | status | help
+# Commands: direct | bedrock | vertex | foundry | opus | opus45 | sonnet | status | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -16,6 +16,14 @@ _opus_model() {
     bedrock) echo "us.anthropic.claude-opus-4-6-v1" ;;
     vertex)  echo "claude-opus-4@20250501" ;;
     *)       echo "claude-opus-4-6" ;;   # direct, foundry
+  esac
+}
+
+_opus45_model() {
+  case "${1:-direct}" in
+    bedrock) echo "us.anthropic.claude-opus-4-5-20251101-v1:0" ;;
+    vertex)  echo "claude-opus-4-5@20251101" ;;
+    *)       echo "claude-opus-4-5-20251101" ;;  # direct, foundry
   esac
 }
 
@@ -85,9 +93,6 @@ _write_env() {
 _status() {
   local provider; provider=$(_active)
   local model;    model=$(_current_model)
-  local is_sonnet=0
-  [[ "$model" == *sonnet* ]] && is_sonnet=1
-
   echo ""
   echo "  ╔══ Claude Code Backend ══════════════════╗"
   case "$provider" in
@@ -97,13 +102,14 @@ _status() {
     foundry) echo "  ║  Provider : Azure AI Foundry            ║" ;;
   esac
   echo "  ║  Model    : ${model}"
-  if [[ $is_sonnet -eq 1 ]]; then
-    echo "  ║  ⚡ Sonnet fallback — run: cc opus"
-  fi
+  case "$model" in
+    *opus-4-5*) echo "  ║  ⚡ Opus 4.5 fallback — run: cc opus" ;;
+    *sonnet*)   echo "  ║  ⚡ Sonnet fallback  — run: cc opus" ;;
+  esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
   echo "  Providers : cc direct | bedrock | vertex | foundry"
-  echo "  Models    : cc opus (default) | sonnet (fallback)"
+  echo "  Models    : cc opus | opus45 | sonnet"
   echo ""
 }
 
@@ -131,6 +137,13 @@ case "$CMD" in
     echo "  → Opus 4.6 on $(_active)"
     ;;
 
+  opus45)
+    provider=$(_active)
+    model=$(_opus45_model "$provider")
+    _set_model "$model"
+    echo "  → Opus 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    ;;
+
   sonnet)
     provider=$(_active)
     model=$(_sonnet_model "$provider")
@@ -154,14 +167,16 @@ case "$CMD" in
     echo ""
     echo "  MODEL TIER  (within current provider)"
     echo "    cc opus       Opus 4.6  — primary"
-    echo "    cc sonnet     Sonnet 4.6 — use when rate-limited"
+    echo "    cc opus45     Opus 4.5  — fallback when 4.6 rate-limited"
+    echo "    cc sonnet     Sonnet 4.6 — lighter fallback"
     echo ""
     echo "  INFO"
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
-    echo "    Hit token limits?  →  cc sonnet  →  open new Claude Code session"
+    echo "    Hit token limits?  →  cc opus45  →  open new Claude Code session"
+    echo "    Still limited?     →  cc sonnet  →  open new Claude Code session"
     echo "    Back to normal?    →  cc opus    →  open new Claude Code session"
     echo ""
     ;;

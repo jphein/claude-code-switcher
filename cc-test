@@ -78,6 +78,13 @@ echo "[ cc opus ]"
 check "settings.json: opus"             "opus"                           "$(model)"
 check "active-backend unchanged"        "direct"                         "$(active)"
 
+# -- cc opus45 (on direct) ----------------------------------------------------
+echo ""
+echo "[ cc opus45 ]"
+"$CC" opus45 >/dev/null
+check "settings.json: opus45"          "opus-4-5"                        "$(model)"
+check "active-backend unchanged"       "direct"                          "$(active)"
+
 # -- cc sonnet (on direct) ----------------------------------------------------
 echo ""
 echo "[ cc sonnet ]"
@@ -85,10 +92,12 @@ echo "[ cc sonnet ]"
 check "settings.json: sonnet"           "sonnet"                         "$(model)"
 check "active-backend unchanged"        "direct"                         "$(active)"
 
-# -- cc sonnet on bedrock (cross-check model IDs) -----------------------------
+# -- model IDs on bedrock (cross-check) ---------------------------------------
 echo ""
-echo "[ cc bedrock + cc sonnet ]"
+echo "[ cc bedrock + model tiers ]"
 "$CC" bedrock >/dev/null
+"$CC" opus45  >/dev/null
+check "bedrock opus45 model ID"         "us.anthropic.claude-opus-4-5"   "$(model)"
 "$CC" sonnet  >/dev/null
 check "bedrock sonnet model ID"         "us.anthropic.claude-sonnet"     "$(model)"
 
