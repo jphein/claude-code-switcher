@@ -2,7 +2,8 @@
 # cc-test — test all cc modes: provider switches, model tiers, status, help
 # Does NOT connect to any API — tests only local state (env.sh, active-backend, settings.json)
 
-CC="${HOME}/bin/cc"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CC="${SCRIPT_DIR}/cc"
 ACTIVE_FILE="${HOME}/.config/claude-code/active-backend"
 ENV_FILE="${HOME}/.config/claude-code/env.sh"
 SETTINGS="${HOME}/.claude/settings.json"

@@ -52,7 +52,7 @@ cc setup-bedrock    Configure AWS credentials
 cc setup-vertex     Authenticate with Google Cloud
 cc setup-foundry    Configure Azure AI Foundry
 
-cc-test             Run local state tests (48 checks)
+cc-test             Run local state tests (53 checks)
 cc-api-test         Test actual API connectivity per provider
 ```
 
@@ -84,7 +84,7 @@ Back to primary?   -->  cc opus    -->  open new session
 ```
 ~/Projects/claude-code-switcher/
     cc              Main script (added to PATH via install.sh)
-    cc-test         Local state test suite (48 checks)
+    cc-test         Local state test suite (53 checks)
     cc-api-test     API connectivity test
     install.sh      Adds project dir to PATH
     README.md       This doc

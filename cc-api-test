@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-CC="${HOME}/bin/cc"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CC="${SCRIPT_DIR}/cc"
 ENV_FILE="${HOME}/.config/claude-code/env.sh"
 
 # Snapshot current state
