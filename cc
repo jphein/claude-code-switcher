@@ -85,13 +85,13 @@ _write_env() {
         ;;
       vertex)
         local proj
-        proj=$("$GCLOUD" config get-value project 2>/dev/null || echo "agentsforgood")
+        proj=$("$GCLOUD" config get-value project 2>/dev/null || echo "YOUR_PROJECT")
         echo "export CLAUDE_CODE_USE_VERTEX=1"
         echo "export CLOUD_ML_REGION=us-east5"
         echo "export ANTHROPIC_VERTEX_PROJECT_ID=${proj}"
         ;;
       foundry)
-        local endpoint="${AZURE_FOUNDRY_ENDPOINT:-https://claud-assistant-resource.services.ai.azure.com/models}"
+        local endpoint="${AZURE_FOUNDRY_ENDPOINT:-https://YOUR_RESOURCE.services.ai.azure.com/models}"
         echo "export ANTHROPIC_BASE_URL=${endpoint}"
         # Azure key: set AZURE_ANTHROPIC_API_KEY in your environment, or it falls back to ANTHROPIC_API_KEY
         if [[ -n "${AZURE_ANTHROPIC_API_KEY:-}" ]]; then
