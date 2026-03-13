@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: direct | bedrock | vertex | foundry | opus | opus45 | sonnet | status | help
+# Commands: direct | bedrock | vertex | foundry | opus | opus45 | sonnet45 | sonnet | haiku | status | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -32,6 +32,22 @@ _sonnet_model() {
     bedrock) echo "us.anthropic.claude-sonnet-4-6-v1" ;;
     vertex)  echo "claude-sonnet-4@20250501" ;;
     *)       echo "claude-sonnet-4-6" ;;  # direct, foundry
+  esac
+}
+
+_sonnet45_model() {
+  case "${1:-direct}" in
+    bedrock) echo "us.anthropic.claude-sonnet-4-5-20250929-v1:0" ;;
+    vertex)  echo "claude-sonnet-4-5@20250929" ;;
+    *)       echo "claude-sonnet-4-5-20250929" ;;  # direct, foundry
+  esac
+}
+
+_haiku_model() {
+  case "${1:-direct}" in
+    bedrock) echo "us.anthropic.claude-haiku-4-5-20251001-v1:0" ;;
+    vertex)  echo "claude-haiku-4-5@20251001" ;;
+    *)       echo "claude-haiku-4-5-20251001" ;;  # direct, foundry
   esac
 }
 
@@ -103,13 +119,15 @@ _status() {
   esac
   echo "  ║  Model    : ${model}"
   case "$model" in
-    *opus-4-5*) echo "  ║  ⚡ Opus 4.5 fallback — run: cc opus" ;;
-    *sonnet*)   echo "  ║  ⚡ Sonnet fallback  — run: cc opus" ;;
+    *opus-4-5*)   echo "  ║  ⚡ Opus 4.5 fallback — run: cc opus" ;;
+    *sonnet-4-5*) echo "  ║  ⚡ Sonnet 4.5 fallback — run: cc opus" ;;
+    *sonnet*)     echo "  ║  ⚡ Sonnet 4.6 fallback — run: cc opus" ;;
+    *haiku*)      echo "  ║  ⚡ Haiku fallback — run: cc opus" ;;
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
   echo "  Providers : cc direct | bedrock | vertex | foundry"
-  echo "  Models    : cc opus | opus45 | sonnet"
+  echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo ""
 }
 
@@ -151,6 +169,20 @@ case "$CMD" in
     echo "  → Sonnet 4.6 on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
+  sonnet45)
+    provider=$(_active)
+    model=$(_sonnet45_model "$provider")
+    _set_model "$model"
+    echo "  → Sonnet 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    ;;
+
+  haiku)
+    provider=$(_active)
+    model=$(_haiku_model "$provider")
+    _set_model "$model"
+    echo "  → Haiku 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    ;;
+
   status|"")
     _status
     ;;
@@ -166,18 +198,21 @@ case "$CMD" in
     echo "    cc foundry    Azure AI Foundry"
     echo ""
     echo "  MODEL TIER  (within current provider)"
-    echo "    cc opus       Opus 4.6  — primary"
-    echo "    cc opus45     Opus 4.5  — fallback when 4.6 rate-limited"
-    echo "    cc sonnet     Sonnet 4.6 — lighter fallback"
+    echo "    cc opus       Opus 4.6   — primary"
+    echo "    cc opus45     Opus 4.5   — fallback when 4.6 rate-limited"
+    echo "    cc sonnet     Sonnet 4.6 — fast + capable"
+    echo "    cc sonnet45   Sonnet 4.5 — extended thinking"
+    echo "    cc haiku      Haiku 4.5  — fastest, cheapest"
     echo ""
     echo "  INFO"
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
-    echo "    Hit token limits?  →  cc opus45  →  open new Claude Code session"
-    echo "    Still limited?     →  cc sonnet  →  open new Claude Code session"
-    echo "    Back to normal?    →  cc opus    →  open new Claude Code session"
+    echo "    Hit Opus limits?   →  cc opus45  →  open new session"
+    echo "    Need speed?        →  cc sonnet  →  open new session"
+    echo "    Need cheapest?     →  cc haiku   →  open new session"
+    echo "    Back to primary?   →  cc opus    →  open new session"
     echo ""
     ;;
 

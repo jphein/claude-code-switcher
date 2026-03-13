@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# cc-api-test — test actual API connectivity for each provider
+# Makes a minimal API call (1-token response) to verify credentials work
+
+set -euo pipefail
+
+CC="${HOME}/bin/cc"
+ENV_FILE="${HOME}/.config/claude-code/env.sh"
+
+# Snapshot current state
+ORIGINAL_ACTIVE=$(cat ~/.config/claude-code/active-backend 2>/dev/null || echo "direct")
+ORIGINAL_MODEL=$(python3 -c "import json; print(json.load(open('${HOME}/.claude/settings.json'))['model'])" 2>/dev/null || echo "")
+
+PASS=0; FAIL=0; SKIP=0
+
+ok()   { echo "  PASS  $1"; ((PASS++)) || true; }
+fail() { echo "  FAIL  $1"; ((FAIL++)) || true; }
+skip() { echo "  SKIP  $1"; ((SKIP++)) || true; }
+
+# Test function: makes a tiny API call
+test_provider() {
+  local provider="$1"
+  local model="$2"
+  local extra_env="${3:-}"
+
+  echo ""
+  echo "[ $provider → $model ]"
+
+  # Switch provider and source env
+  "$CC" "$provider" >/dev/null 2>&1
+  source "$ENV_FILE" 2>/dev/null || true
+
+  # Apply any extra env (for testing specific models)
+  eval "$extra_env" 2>/dev/null || true
+
+  # Build curl command based on provider
+  local response
+  case "$provider" in
+    direct)
+      if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+        skip "ANTHROPIC_API_KEY not set"
+        return
+      fi
+      response=$(curl -s --max-time 30 https://api.anthropic.com/v1/messages \
+        -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "content-type: application/json" \
+        -d "{\"model\":\"$model\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" 2>&1)
+      ;;
+    bedrock)
+      if ! command -v aws &>/dev/null; then
+        skip "aws CLI not installed"
+        return
+      fi
+      # Use AWS CLI to invoke bedrock (body must be base64)
+      local body
+      body=$(echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' | base64 -w0)
+      local tmpfile="/tmp/cc-api-test-bedrock.json"
+      if aws bedrock-runtime invoke-model \
+        --region "${AWS_REGION:-us-west-1}" \
+        --model-id "$model" \
+        --content-type "application/json" \
+        --accept "application/json" \
+        --body "$body" \
+        "$tmpfile" 2>&1; then
+        response=$(cat "$tmpfile" 2>/dev/null)
+      else
+        response="error: aws invoke failed"
+      fi
+      rm -f "$tmpfile"
+      ;;
+    vertex)
+      if [[ -z "${ANTHROPIC_VERTEX_PROJECT_ID:-}" ]]; then
+        skip "ANTHROPIC_VERTEX_PROJECT_ID not set"
+        return
+      fi
+      local token
+      token=$("${HOME}/google-cloud-sdk/bin/gcloud" auth print-access-token 2>/dev/null || echo "")
+      if [[ -z "$token" ]]; then
+        skip "gcloud auth not configured"
+        return
+      fi
+      local endpoint="https://${CLOUD_ML_REGION:-us-west1}-aiplatform.googleapis.com/v1/projects/${ANTHROPIC_VERTEX_PROJECT_ID}/locations/${CLOUD_ML_REGION:-us-west1}/publishers/anthropic/models/${model}:streamRawPredict"
+      response=$(curl -s --max-time 30 "$endpoint" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' 2>&1)
+      ;;
+    foundry)
+      if [[ -z "${ANTHROPIC_BASE_URL:-}" ]]; then
+        skip "ANTHROPIC_BASE_URL not set"
+        return
+      fi
+      local key="${AZURE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+      if [[ -z "$key" ]]; then
+        skip "No API key for Azure"
+        return
+      fi
+      response=$(curl -s --max-time 30 "${ANTHROPIC_BASE_URL}" \
+        -H "api-key: $key" \
+        -H "content-type: application/json" \
+        -d "{\"model\":\"$model\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" 2>&1)
+      ;;
+  esac
+
+  # Check response
+  if echo "$response" | grep -qE '"stop_reason"|"type":"message"'; then
+    ok "$provider API responded"
+  elif echo "$response" | grep -qi "error\|unauthorized\|forbidden\|AccessDenied"; then
+    fail "$response"
+  else
+    fail "unexpected response: ${response:0:200}"
+  fi
+}
+
+echo ""
+echo "cc-api-test — testing provider connectivity"
+echo "────────────────────────────────────────────────────"
+
+# Test each provider with default opus model
+test_provider "direct"  "claude-opus-4-6"
+test_provider "bedrock" "us.anthropic.claude-opus-4-6-v1"
+test_provider "vertex"  "claude-opus-4@20250501"
+test_provider "foundry" "claude-opus-4-6"
+
+# Restore original state
+echo ""
+echo "[ restore ]"
+"$CC" "$ORIGINAL_ACTIVE" >/dev/null 2>&1
+if [[ "$ORIGINAL_MODEL" == *sonnet* ]]; then "$CC" sonnet >/dev/null 2>&1
+elif [[ "$ORIGINAL_MODEL" == *opus-4-5* ]]; then "$CC" opus45 >/dev/null 2>&1
+elif [[ "$ORIGINAL_MODEL" == *haiku* ]]; then "$CC" haiku >/dev/null 2>&1
+else "$CC" opus >/dev/null 2>&1; fi
+echo "  restored to ${ORIGINAL_ACTIVE}"
+
+# Summary
+TOTAL=$((PASS + FAIL + SKIP))
+echo ""
+echo "────────────────────────────────────────────────────"
+echo "  ${PASS} passed   ${FAIL} failed   ${SKIP} skipped   (${TOTAL} total)"
+echo ""
+
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1
