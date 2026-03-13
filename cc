@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | check | status | help
+# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -91,15 +91,24 @@ _write_env() {
         echo "export ANTHROPIC_VERTEX_PROJECT_ID=${proj}"
         ;;
       foundry)
+        # Source saved credentials if available
+        local foundry_env="${CONFIG_DIR}/foundry.env"
+        if [[ -f "$foundry_env" ]]; then
+          # shellcheck disable=SC1090
+          source "$foundry_env"
+        fi
         local endpoint="${AZURE_FOUNDRY_ENDPOINT:-https://YOUR_RESOURCE.services.ai.azure.com/models}"
         echo "export ANTHROPIC_BASE_URL=${endpoint}"
-        # Azure key: set AZURE_ANTHROPIC_API_KEY in your environment, or it falls back to ANTHROPIC_API_KEY
         if [[ -n "${AZURE_ANTHROPIC_API_KEY:-}" ]]; then
           echo "export ANTHROPIC_API_KEY=${AZURE_ANTHROPIC_API_KEY}"
         fi
         ;;
       direct)
-        : # Uses ANTHROPIC_API_KEY already in env — no extra vars needed
+        # Source saved API key if available
+        local direct_env="${CONFIG_DIR}/direct.env"
+        if [[ -f "$direct_env" ]]; then
+          cat "$direct_env"
+        fi
         ;;
       teams)
         # OAuth-based Claude Teams — clear API key so Claude Code uses browser login
@@ -211,6 +220,127 @@ _check() {
   echo ""
 }
 
+# ── Setup commands ────────────────────────────────────────────────────────────
+_setup_bedrock() {
+  echo ""
+  echo "  AWS Bedrock Setup"
+  echo "  ─────────────────"
+
+  # Check if aws CLI exists
+  if ! command -v aws &>/dev/null; then
+    echo "  ✗ AWS CLI not found. Install: https://aws.amazon.com/cli/"
+    return 1
+  fi
+
+  # Check existing credentials
+  if [[ -f ~/.aws/credentials ]] && grep -q aws_access_key_id ~/.aws/credentials 2>/dev/null; then
+    echo "  Found existing ~/.aws/credentials"
+    read -p "  Overwrite? [y/N] " -n 1 -r
+    echo
+    [[ ! $REPLY =~ ^[Yy]$ ]] && echo "  Aborted." && return 0
+  fi
+
+  read -p "  AWS Access Key ID: " aws_key
+  read -s -p "  AWS Secret Access Key: " aws_secret
+  echo
+  read -p "  Region [us-west-1]: " aws_region
+  aws_region="${aws_region:-us-west-1}"
+
+  mkdir -p ~/.aws
+  cat > ~/.aws/credentials <<EOF
+[default]
+aws_access_key_id = ${aws_key}
+aws_secret_access_key = ${aws_secret}
+EOF
+  chmod 600 ~/.aws/credentials
+
+  cat > ~/.aws/config <<EOF
+[default]
+region = ${aws_region}
+output = json
+EOF
+
+  echo ""
+  echo "  ✓ AWS credentials saved to ~/.aws/credentials"
+  echo "  ✓ Region set to ${aws_region}"
+  echo ""
+  echo "  Run 'cc bedrock' to switch to Bedrock provider"
+  echo ""
+}
+
+_setup_vertex() {
+  echo ""
+  echo "  Google Vertex AI Setup"
+  echo "  ──────────────────────"
+
+  if [[ ! -x "$GCLOUD" ]]; then
+    echo "  ✗ gcloud not found at ${GCLOUD}"
+    echo "  Install: https://cloud.google.com/sdk/docs/install"
+    return 1
+  fi
+
+  echo "  Opening browser for Google Cloud authentication..."
+  "$GCLOUD" auth login
+
+  echo ""
+  read -p "  GCP Project ID: " gcp_project
+  "$GCLOUD" config set project "$gcp_project"
+
+  echo ""
+  echo "  ✓ Authenticated with Google Cloud"
+  echo "  ✓ Project set to ${gcp_project}"
+  echo ""
+  echo "  Run 'cc vertex' to switch to Vertex AI provider"
+  echo ""
+}
+
+_setup_foundry() {
+  echo ""
+  echo "  Azure AI Foundry Setup"
+  echo "  ──────────────────────"
+
+  read -p "  Azure endpoint URL (e.g. https://YOUR_RESOURCE.services.ai.azure.com/models): " azure_endpoint
+  read -s -p "  Azure API Key: " azure_key
+  echo
+
+  # Save to env file that gets sourced
+  local foundry_env="${CONFIG_DIR}/foundry.env"
+  cat > "$foundry_env" <<EOF
+# Azure AI Foundry credentials (sourced by cc foundry)
+export AZURE_FOUNDRY_ENDPOINT="${azure_endpoint}"
+export AZURE_ANTHROPIC_API_KEY="${azure_key}"
+EOF
+  chmod 600 "$foundry_env"
+
+  echo ""
+  echo "  ✓ Azure credentials saved to ${foundry_env}"
+  echo ""
+  echo "  Run 'cc foundry' to switch to Azure AI Foundry"
+  echo ""
+}
+
+_setup_direct() {
+  echo ""
+  echo "  Direct Anthropic API Setup"
+  echo "  ──────────────────────────"
+
+  read -s -p "  Anthropic API Key: " api_key
+  echo
+
+  local direct_env="${CONFIG_DIR}/direct.env"
+  cat > "$direct_env" <<EOF
+# Direct Anthropic API key (sourced by cc direct)
+export ANTHROPIC_API_KEY="${api_key}"
+EOF
+  chmod 600 "$direct_env"
+
+  echo ""
+  echo "  ✓ API key saved to ${direct_env}"
+  echo ""
+  echo "  Run 'cc direct' to switch to direct API"
+  echo ""
+}
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 _status() {
   local provider; provider=$(_active)
@@ -300,6 +430,31 @@ case "$CMD" in
     _check
     ;;
 
+  setup-bedrock)
+    _setup_bedrock
+    ;;
+
+  setup-vertex)
+    _setup_vertex
+    ;;
+
+  setup-foundry)
+    _setup_foundry
+    ;;
+
+  setup-direct)
+    _setup_direct
+    ;;
+
+  setup)
+    echo ""
+    echo "  cc setup-bedrock   Configure AWS credentials for Bedrock"
+    echo "  cc setup-vertex    Authenticate with Google Cloud"
+    echo "  cc setup-foundry   Configure Azure AI Foundry endpoint"
+    echo "  cc setup-direct    Configure Anthropic API key"
+    echo ""
+    ;;
+
   status|"")
     _status
     ;;
@@ -307,6 +462,12 @@ case "$CMD" in
   help|-h|--help)
     echo ""
     echo "  cc — Claude Code backend switcher"
+    echo ""
+    echo "  SETUP  (first-time configuration)"
+    echo "    cc setup-bedrock   Configure AWS credentials"
+    echo "    cc setup-vertex    Authenticate with Google Cloud"
+    echo "    cc setup-foundry   Configure Azure AI Foundry"
+    echo "    cc setup-direct    Configure Anthropic API key"
     echo ""
     echo "  PROVIDERS"
     echo "    cc teams      Claude Teams (OAuth browser login)  [default]"

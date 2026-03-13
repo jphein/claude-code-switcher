@@ -30,4 +30,8 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
 fi
 
 echo ""
-echo "Done! Run 'cc status' to verify."
+echo "Done! Next steps:"
+echo "  cc status         Verify installation"
+echo "  cc setup-bedrock  Configure AWS (if using Bedrock)"
+echo "  cc setup-vertex   Configure GCP (if using Vertex AI)"
+echo "  cc help           See all commands"

@@ -5,10 +5,28 @@ Switch Claude Code between API providers and model tiers from the command line.
 ## Install
 
 ```bash
+./install.sh
+```
+
+Or manually:
+```bash
 ln -s "$(pwd)/cc" ~/bin/cc
 ln -s "$(pwd)/cc-test" ~/bin/cc-test
 ln -s "$(pwd)/cc-api-test" ~/bin/cc-api-test
 ```
+
+## First-Time Setup
+
+Configure credentials for the providers you want to use:
+
+```bash
+cc setup-bedrock    # AWS credentials for Bedrock
+cc setup-vertex     # Google Cloud auth for Vertex AI
+cc setup-foundry    # Azure endpoint + key for AI Foundry
+cc setup-direct     # Anthropic API key for direct API
+```
+
+Teams provider uses OAuth browser login -- no setup needed.
 
 ## Commands
 
@@ -28,7 +46,14 @@ cc sonnet           Sonnet 4.6 -- fast + capable
 cc sonnet45         Sonnet 4.5 -- extended thinking
 cc haiku            Haiku 4.5  -- fastest, cheapest
 
+cc check            Test connectivity for all providers
 cc help             Show built-in help
+
+cc setup-bedrock    Configure AWS credentials
+cc setup-vertex     Authenticate with Google Cloud
+cc setup-foundry    Configure Azure AI Foundry
+cc setup-direct     Configure Anthropic API key
+
 cc-test             Run local state tests (48 checks)
 cc-api-test         Test actual API connectivity per provider
 ```
@@ -68,7 +93,10 @@ Back to primary?   -->  cc opus    -->  open new session
 ~/.config/claude-code/
     active-backend  Current provider: teams|direct|bedrock|vertex|foundry
     env.sh          Sourced by shell for provider env vars
+    direct.env      Anthropic API key (from cc setup-direct)
+    foundry.env     Azure endpoint + key (from cc setup-foundry)
 
+~/.aws/credentials        AWS credentials (from cc setup-bedrock)
 ~/.claude/settings.json   Claude Code settings (model field)
 ```
 
