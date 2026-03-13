@@ -341,6 +341,22 @@ EOF
   echo ""
 }
 
+_setup_teams() {
+  echo ""
+  echo "  Claude Teams Setup"
+  echo "  ──────────────────"
+  echo ""
+  echo "  Teams uses OAuth browser login - no credentials needed!"
+  echo ""
+  echo "  Requirements:"
+  echo "    • Claude Teams or Claude Pro subscription"
+  echo "    • Browser access for OAuth flow"
+  echo ""
+  echo "  Run 'cc teams' to switch, then start Claude Code."
+  echo "  A browser window will open for authentication."
+  echo ""
+}
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 _status() {
   local provider; provider=$(_active)
@@ -446,12 +462,17 @@ case "$CMD" in
     _setup_direct
     ;;
 
+  setup-teams)
+    _setup_teams
+    ;;
+
   setup)
     echo ""
+    echo "  cc setup-teams     Info on Claude Teams OAuth login"
+    echo "  cc setup-direct    Configure Anthropic API key"
     echo "  cc setup-bedrock   Configure AWS credentials for Bedrock"
     echo "  cc setup-vertex    Authenticate with Google Cloud"
     echo "  cc setup-foundry   Configure Azure AI Foundry endpoint"
-    echo "  cc setup-direct    Configure Anthropic API key"
     echo ""
     ;;
 
@@ -464,10 +485,11 @@ case "$CMD" in
     echo "  cc — Claude Code backend switcher"
     echo ""
     echo "  SETUP  (first-time configuration)"
+    echo "    cc setup-teams     Info on Claude Teams OAuth"
+    echo "    cc setup-direct    Configure Anthropic API key"
     echo "    cc setup-bedrock   Configure AWS credentials"
     echo "    cc setup-vertex    Authenticate with Google Cloud"
     echo "    cc setup-foundry   Configure Azure AI Foundry"
-    echo "    cc setup-direct    Configure Anthropic API key"
     echo ""
     echo "  PROVIDERS"
     echo "    cc teams      Claude Teams (OAuth browser login)  [default]"

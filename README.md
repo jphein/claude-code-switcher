@@ -20,13 +20,12 @@ ln -s "$(pwd)/cc-api-test" ~/bin/cc-api-test
 Configure credentials for the providers you want to use:
 
 ```bash
+cc setup-teams      # Info on Claude Teams OAuth (no creds needed)
+cc setup-direct     # Anthropic API key for direct API
 cc setup-bedrock    # AWS credentials for Bedrock
 cc setup-vertex     # Google Cloud auth for Vertex AI
 cc setup-foundry    # Azure endpoint + key for AI Foundry
-cc setup-direct     # Anthropic API key for direct API
 ```
-
-Teams provider uses OAuth browser login -- no setup needed.
 
 ## Commands
 
@@ -49,10 +48,11 @@ cc haiku            Haiku 4.5  -- fastest, cheapest
 cc check            Test connectivity for all providers
 cc help             Show built-in help
 
+cc setup-teams      Info on Claude Teams OAuth
+cc setup-direct     Configure Anthropic API key
 cc setup-bedrock    Configure AWS credentials
 cc setup-vertex     Authenticate with Google Cloud
 cc setup-foundry    Configure Azure AI Foundry
-cc setup-direct     Configure Anthropic API key
 
 cc-test             Run local state tests (48 checks)
 cc-api-test         Test actual API connectivity per provider
