@@ -85,6 +85,16 @@ PROVIDERS = ["teams", "direct", "bedrock", "vertex", "foundry"]
 
 # ── Extended model catalogs (for --all mode) ────────────────────────────────
 
+# Azure AI Foundry deployed models (user deploys these)
+AZURE_DEPLOYED = [
+    # OpenAI reasoning
+    "o1", "o4-mini", "o1-mini", "o1-preview", "o3-mini",
+    # OpenAI GPT
+    "gpt-5.3-chat", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-35-turbo",
+    # Embeddings
+    "text-embedding-3-large", "text-embedding-3-small", "text-embedding-ada-002",
+]
+
 # Azure AI Foundry serverless models (verified working 2026-03)
 AZURE_SERVERLESS = [
     # xAI
@@ -335,6 +345,25 @@ async def test_azure_serverless(client, model_id, endpoint, api_key):
         "model": model_id, "max_tokens": 10,
         "messages": [{"role": "user", "content": "hi"}],
     })
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_azure_deployed(client, model_id, endpoint, api_key):
+    """Test Azure AI Foundry deployed model (OpenAI deployment endpoint)."""
+    base = endpoint.rstrip("/").removesuffix("/models")
+    is_reasoning = any(p in model_id.lower() for p in ("o1", "o3", "o4", "gpt-5"))
+    version = "2024-12-01-preview" if is_reasoning else "2024-02-01"
+    url = f"{base}/openai/deployments/{model_id}/chat/completions?api-version={version}"
+    headers = {"api-key": api_key, "content-type": "application/json"}
+
+    if is_reasoning:
+        body = json.dumps({"messages": [{"role": "user", "content": "hi"}], "max_completion_tokens": 5})
+    else:
+        body = json.dumps({"messages": [{"role": "user", "content": "hi"}], "max_tokens": 5})
+
     t0 = time.perf_counter()
     resp = await client.post(url, content=body, headers=headers, timeout=30.0)
     latency = int((time.perf_counter() - t0) * 1000)
@@ -629,16 +658,21 @@ def render_table(results, wall_time, creds):
 
 
 async def scan_extended(creds):
-    """Scan all models including Azure serverless, Bedrock extras, and Google."""
+    """Scan all models including Azure deployed, serverless, Bedrock extras, and Google."""
     results = {}
     wall_start = time.perf_counter()
 
     async with httpx.AsyncClient() as client:
         tasks = []
 
-        # Azure serverless models
+        # Azure deployed models
         ep = creds["foundry"]["endpoint"]
         ak = creds["foundry"]["api_key"]
+        if ep and ak:
+            for model in AZURE_DEPLOYED:
+                tasks.append(scan_single(client, "azure-deploy", model, creds, results))
+
+        # Azure serverless models
         if ep and ak:
             for model in AZURE_SERVERLESS:
                 tasks.append(scan_single(client, "azure", model, creds, results))
@@ -667,7 +701,11 @@ async def scan_single(client, provider, model, creds, results, model_id=None):
     key = (provider, model)
     model_id = model_id or model
     try:
-        if provider == "azure":
+        if provider == "azure-deploy":
+            ep = creds["foundry"]["endpoint"]
+            ak = creds["foundry"]["api_key"]
+            code, ms, body = await test_azure_deployed(client, model_id, ep, ak)
+        elif provider == "azure":
             ep = creds["foundry"]["endpoint"]
             ak = creds["foundry"]["api_key"]
             code, ms, body = await test_azure_serverless(client, model_id, ep, ak)
@@ -698,7 +736,7 @@ def render_extended(results, wall_time, creds):
     print()
 
     # Group by provider
-    providers = {"azure": [], "bedrock-x": [], "google": []}
+    providers = {"azure-deploy": [], "azure": [], "bedrock-x": [], "google": []}
     for (prov, model), res in sorted(results.items()):
         if prov in providers:
             providers[prov].append((model, res))
@@ -706,7 +744,7 @@ def render_extended(results, wall_time, creds):
     for prov, models in providers.items():
         if not models:
             continue
-        prov_name = {"azure": "Azure Serverless", "bedrock-x": "AWS Bedrock", "google": "Google Gemini"}[prov]
+        prov_name = {"azure-deploy": "Azure Deployed", "azure": "Azure Serverless", "bedrock-x": "AWS Bedrock", "google": "Google Gemini"}[prov]
         print(f"  {BOLD}{prov_name}{RESET}")
         for model, (kind, color, label, ms, _) in models:
             if kind == "pass":
@@ -769,9 +807,49 @@ async def list_catalog(creds):
             print(f"    {RED}Error: {e}{RESET}")
         print()
 
-    # Azure - just show known serverless models
-    if creds["foundry"]["api_key"]:
-        print(f"  {BOLD}Azure AI Foundry{RESET} {DIM}(serverless){RESET}")
+    # Azure - show both deployed and serverless models with status
+    ep = creds["foundry"]["endpoint"]
+    ak = creds["foundry"]["api_key"]
+    if ep and ak:
+        # Quick test which are deployed
+        print(f"  {BOLD}Azure AI Foundry{RESET} {DIM}(OpenAI deployments){RESET}")
+
+        async with httpx.AsyncClient() as client:
+            tasks = []
+            for m in AZURE_DEPLOYED:
+                tasks.append(_check_azure_deploy(client, m, ep, ak))
+            results = await asyncio.gather(*tasks)
+            for m, status in results:
+                print(f"    {m:<30} {status}")
+
+
+async def _check_azure_deploy(client, m, ep, ak):
+    """Check if Azure model is deployed."""
+    is_reasoning = any(p in m.lower() for p in ("o1", "o3", "o4", "gpt-5"))
+    is_embed = "embed" in m.lower()
+    version = "2024-12-01-preview" if is_reasoning else "2024-02-01"
+    url = f"{ep}/openai/deployments/{m}/chat/completions?api-version={version}"
+    if is_embed:
+        url = f"{ep}/openai/deployments/{m}/embeddings?api-version=2024-02-01"
+        body = {"input": "hi"}
+    elif is_reasoning:
+        body = {"messages": [{"role": "user", "content": "hi"}], "max_completion_tokens": 10}
+    else:
+        body = {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
+    try:
+        resp = await client.post(url, headers={"api-key": ak, "content-type": "application/json"},
+            content=json.dumps(body), timeout=15.0)
+        if resp.status_code in (200, 429):
+            return m, f"{GREEN}deployed{RESET}"
+        elif resp.status_code == 404:
+            return m, f"{GRAY}can deploy{RESET}"
+        else:
+            return m, f"{GRAY}can deploy{RESET}"
+    except:
+        return m, f"{RED}error{RESET}"
+
+        print()
+        print(f"  {BOLD}Azure AI Foundry{RESET} {DIM}(serverless - always available){RESET}")
         for m in AZURE_SERVERLESS:
             print(f"    {DIM}{m}{RESET}")
         print()
