@@ -511,8 +511,6 @@ case "$CMD" in
     echo "    cc status     Same as above"
     echo "    cc check      Test connectivity for all providers"
     echo "    cc scan       Claude model matrix (5 tiers × 5 providers)"
-    echo "    cc scan --all Extended scan (Claude + Azure + Bedrock + Google)"
-    echo "    cc scan --catalog  List all deployable models per provider"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
     echo "    Hit Opus limits?   →  cc opus45  →  open new session"
