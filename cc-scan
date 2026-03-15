@@ -1,0 +1,516 @@
+#!/usr/bin/env python3
+"""cc-scan — Test all Claude models across all providers with a beautiful matrix table.
+
+Loads credentials from:
+  - ~/.config/claude-code/direct.env (ANTHROPIC_API_KEY)
+  - ~/.config/claude-code/foundry.env (AZURE_FOUNDRY_ENDPOINT, AZURE_ANTHROPIC_API_KEY)
+  - ~/.aws/credentials (aws_access_key_id, aws_secret_access_key)
+  - ~/.config/azure-chat-assistant/config.json (fallback for all platforms)
+  - gcloud auth print-access-token (Vertex AI)
+
+Tests all 5 model tiers × 5 providers = 25 checks in parallel.
+"""
+
+import asyncio
+import hashlib
+import hmac
+import json
+import os
+import subprocess
+import sys
+import time
+from configparser import ConfigParser
+from datetime import datetime, timezone
+from urllib.parse import quote, urlparse
+
+try:
+    import httpx
+except ImportError:
+    print("  Error: httpx not installed. Run: pip install httpx", file=sys.stderr)
+    sys.exit(1)
+
+# ── ANSI Colors ──────────────────────────────────────────────────────────────
+
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+GREEN = "\033[38;5;78m"
+RED = "\033[38;5;203m"
+YELLOW = "\033[38;5;222m"
+CYAN = "\033[38;5;117m"
+GRAY = "\033[38;5;243m"
+WHITE = "\033[38;5;255m"
+HEADER_BG = "\033[48;5;236m"
+
+# ── Model definitions ────────────────────────────────────────────────────────
+
+TIERS = ["Opus 4.6", "Opus 4.5", "Sonnet 4.6", "Sonnet 4.5", "Haiku 4.5"]
+
+MODELS = {
+    "direct": {
+        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 4.5":   "claude-opus-4-5-20251101",
+        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 4.5": "claude-sonnet-4-5-20250929",
+        "Haiku 4.5":  "claude-haiku-4-5-20251001",
+    },
+    "bedrock": {
+        "Opus 4.6":   "us.anthropic.claude-opus-4-6-v1",
+        "Opus 4.5":   "us.anthropic.claude-opus-4-5-20251101-v1:0",
+        "Sonnet 4.6": "us.anthropic.claude-sonnet-4-6",
+        "Sonnet 4.5": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "Haiku 4.5":  "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    },
+    "vertex": {
+        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 4.5":   "claude-opus-4-5@20251101",
+        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 4.5": "claude-sonnet-4-5@20250929",
+        "Haiku 4.5":  "claude-haiku-4-5@20251001",
+    },
+    "foundry": {
+        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 4.5":   "claude-opus-4-5-20251101",
+        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 4.5": "claude-sonnet-4-5-20250929",
+        "Haiku 4.5":  "claude-haiku-4-5-20251001",
+    },
+}
+# teams uses same IDs as direct
+MODELS["teams"] = MODELS["direct"]
+
+PROVIDERS = ["teams", "direct", "bedrock", "vertex", "foundry"]
+
+# ── Credential loading ───────────────────────────────────────────────────────
+
+def _load_env_file(path):
+    """Parse a shell env file for export KEY=VALUE lines."""
+    vals = {}
+    if not os.path.exists(path):
+        return vals
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            line = line.removeprefix("export ")
+            key, _, val = line.partition("=")
+            vals[key.strip()] = val.strip().strip('"').strip("'")
+    return vals
+
+
+def _load_aws_creds():
+    """Load AWS credentials from ~/.aws/credentials."""
+    cp = ConfigParser()
+    cp.read(os.path.expanduser("~/.aws/credentials"))
+    if cp.has_section("default"):
+        return cp.get("default", "aws_access_key_id", fallback=""), cp.get("default", "aws_secret_access_key", fallback="")
+    return "", ""
+
+
+def _load_chat_assistant_config():
+    """Load the chat assistant config as fallback credentials."""
+    path = os.path.expanduser("~/.config/azure-chat-assistant/config.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
+def load_credentials():
+    """Load all available credentials from various sources."""
+    creds = {
+        "direct": {"api_key": ""},
+        "bedrock": {"access_key": "", "secret_key": "", "region": "us-west-1"},
+        "vertex": {"token": "", "project": "", "region": "us-east5"},
+        "foundry": {"endpoint": "", "api_key": ""},
+        "teams": {"available": False},
+    }
+
+    # Direct: from env file or environment
+    direct_env = _load_env_file(os.path.expanduser("~/.config/claude-code/direct.env"))
+    creds["direct"]["api_key"] = direct_env.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+
+    # Bedrock: from ~/.aws/credentials
+    ak, sk = _load_aws_creds()
+    if ak and sk:
+        creds["bedrock"]["access_key"] = ak
+        creds["bedrock"]["secret_key"] = sk
+
+    # Vertex: try gcloud for token
+    gcloud = os.path.expanduser("~/google-cloud-sdk/bin/gcloud")
+    if os.path.exists(gcloud):
+        try:
+            token = subprocess.check_output([gcloud, "auth", "print-access-token"], timeout=10, stderr=subprocess.DEVNULL).decode().strip()
+            project = subprocess.check_output([gcloud, "config", "get-value", "project"], timeout=5, stderr=subprocess.DEVNULL).decode().strip()
+            creds["vertex"]["token"] = token
+            creds["vertex"]["project"] = project
+        except Exception:
+            pass
+
+    # Foundry: from env file
+    foundry_env = _load_env_file(os.path.expanduser("~/.config/claude-code/foundry.env"))
+    creds["foundry"]["endpoint"] = foundry_env.get("AZURE_FOUNDRY_ENDPOINT", "")
+    creds["foundry"]["api_key"] = foundry_env.get("AZURE_ANTHROPIC_API_KEY", "")
+
+    # Fallback: chat assistant config
+    ca = _load_chat_assistant_config()
+    if ca:
+        if not creds["bedrock"]["access_key"] and ca.get("aws_access_key"):
+            creds["bedrock"]["access_key"] = ca["aws_access_key"]
+            creds["bedrock"]["secret_key"] = ca.get("aws_secret_key", "")
+            creds["bedrock"]["region"] = ca.get("aws_region", "us-west-1")
+        if not creds["foundry"]["endpoint"] and ca.get("endpoint"):
+            ep = ca["endpoint"].rstrip("/")
+            creds["foundry"]["endpoint"] = ep
+            creds["foundry"]["api_key"] = ca.get("api_key", "")
+        # Note: Google API key from chat assistant is for Gemini, not Claude on Vertex.
+        # Claude on Vertex requires gcloud OAuth token + anthropic publisher endpoint.
+
+    return creds
+
+# ── AWS SigV4 signing ────────────────────────────────────────────────────────
+
+def _aws_sign(method, url, payload, region, access_key, secret_key):
+    """Sign an AWS request using SigV4. Returns headers dict."""
+    parsed = urlparse(url)
+    host = parsed.netloc
+    uri = parsed.path or "/"
+    t = datetime.now(timezone.utc)
+    amz_date = t.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = t.strftime("%Y%m%d")
+
+    canonical_uri = quote(uri, safe="/-_.~")
+    headers_to_sign = {"host": host, "x-amz-date": amz_date, "content-type": "application/json"}
+    signed_headers = ";".join(sorted(headers_to_sign.keys()))
+    canonical_headers = "".join(f"{k}:{v}\n" for k, v in sorted(headers_to_sign.items()))
+    payload_hash = hashlib.sha256(payload.encode()).hexdigest()
+
+    canonical_request = f"{method}\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    algorithm = "AWS4-HMAC-SHA256"
+    credential_scope = f"{date_stamp}/{region}/bedrock/aws4_request"
+    string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode()).hexdigest()}"
+
+    def sign(key, msg):
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    k_date = sign(f"AWS4{secret_key}".encode(), date_stamp)
+    k_region = sign(k_date, region)
+    k_service = sign(k_region, "bedrock")
+    k_signing = sign(k_service, "aws4_request")
+    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()
+
+    authorization = f"{algorithm} Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    return {"host": host, "x-amz-date": amz_date, "content-type": "application/json", "authorization": authorization}
+
+# ── API test functions ───────────────────────────────────────────────────────
+
+async def test_direct(client, model_id, api_key):
+    """Test direct Anthropic API."""
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = json.dumps({"model": model_id, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]})
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_bedrock(client, model_id, access_key, secret_key, region):
+    """Test AWS Bedrock Converse API."""
+    body = json.dumps({
+        "modelId": model_id,
+        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+        "inferenceConfig": {"maxTokens": 1, "temperature": 1.0},
+    })
+    url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{quote(model_id, safe='')}/converse"
+    headers = _aws_sign("POST", url, body, region, access_key, secret_key)
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_vertex(client, model_id, creds):
+    """Test Google Vertex AI."""
+    token = creds.get("token", "")
+    api_key = creds.get("api_key", "")
+    project = creds.get("project", "")
+    region = creds.get("region", "us-east5")
+
+    if token:
+        # OAuth token flow
+        url = f"https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model_id}:streamRawPredict"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        body = json.dumps({"anthropic_version": "vertex-2023-10-16", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]})
+    elif api_key:
+        # API key flow via OpenAI-compatible endpoint
+        url = f"https://aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{region}/endpoints/openapi/chat/completions"
+        headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+        body = json.dumps({"model": f"google/{model_id}", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]})
+    else:
+        return 0, 0, "no credentials"
+
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_foundry(client, model_id, endpoint, api_key):
+    """Test Azure AI Foundry — try Anthropic Messages API, fallback to OpenAI format."""
+    # Claude models on Foundry use the Anthropic Messages API
+    base = endpoint.rstrip("/").removesuffix("/models")
+    url = f"{base}/anthropic/v1/messages"
+    headers = {"api-key": api_key, "content-type": "application/json"}
+    body = json.dumps({
+        "model": model_id, "max_tokens": 1, "anthropic_version": "2023-06-01",
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+# ── Result classification ────────────────────────────────────────────────────
+
+def classify(status_code, body=""):
+    """Classify API response into (symbol, color, label)."""
+    body_lower = body.lower()
+    if status_code == 200:
+        return "pass", GREEN, "OK"
+    if status_code == 429:
+        return "rate", YELLOW, "rate-limited"
+    if status_code in (401, 403):
+        if "invalid subscription" in body_lower or "wrong api endpoint" in body_lower:
+            return "skip", GRAY, "no-deploy"
+        return "auth", RED, "auth-fail"
+    if status_code == 404:
+        if "not found" in body_lower or "not available" in body_lower:
+            return "missing", RED, "not-available"
+        return "missing", RED, "not-found"
+    if "quota" in body_lower or "resource_exhausted" in body_lower:
+        return "quota", YELLOW, "no-quota"
+    if "not enabled" in body_lower or "not available" in body_lower:
+        return "missing", RED, "not-enabled"
+    if status_code == 0:
+        return "skip", GRAY, "no-creds"
+    if 400 <= status_code < 500:
+        return "error", RED, f"err-{status_code}"
+    if status_code >= 500:
+        return "error", RED, f"srv-{status_code}"
+    return "error", RED, f"http-{status_code}"
+
+# ── Main scan ────────────────────────────────────────────────────────────────
+
+async def scan_provider(client, provider, creds, results):
+    """Test all models for a single provider."""
+    models = MODELS.get(provider, {})
+
+    for tier in TIERS:
+        model_id = models.get(tier, "")
+        key = (provider, tier)
+
+        if provider == "teams":
+            results[key] = ("skip", GRAY, "--", 0, "OAuth")
+            continue
+
+        try:
+            if provider == "direct":
+                ak = creds["direct"]["api_key"]
+                if not ak:
+                    results[key] = ("skip", GRAY, "--", 0, "no key")
+                    continue
+                code, ms, body = await test_direct(client, model_id, ak)
+
+            elif provider == "bedrock":
+                ak = creds["bedrock"]["access_key"]
+                sk = creds["bedrock"]["secret_key"]
+                if not ak or not sk:
+                    results[key] = ("skip", GRAY, "--", 0, "no creds")
+                    continue
+                code, ms, body = await test_bedrock(client, model_id, ak, sk, creds["bedrock"]["region"])
+
+            elif provider == "vertex":
+                tok = creds["vertex"].get("token", "")
+                gak = creds["vertex"].get("api_key", "")
+                if not tok and not gak:
+                    results[key] = ("skip", GRAY, "--", 0, "no creds")
+                    continue
+                code, ms, body = await test_vertex(client, model_id, creds["vertex"])
+
+            elif provider == "foundry":
+                ep = creds["foundry"]["endpoint"]
+                ak = creds["foundry"]["api_key"]
+                if not ep or not ak:
+                    results[key] = ("skip", GRAY, "--", 0, "no creds")
+                    continue
+                code, ms, body = await test_foundry(client, model_id, ep, ak)
+
+            else:
+                results[key] = ("skip", GRAY, "--", 0, "unknown")
+                continue
+
+            kind, color, label = classify(code, body)
+            results[key] = (kind, color, label, ms, "")
+
+        except httpx.TimeoutException:
+            results[key] = ("error", RED, "timeout", 0, "")
+        except Exception as e:
+            results[key] = ("error", RED, "error", 0, str(e)[:40])
+
+
+async def run_scan():
+    """Run the full scan across all providers and models."""
+    creds = load_credentials()
+    results = {}
+    wall_start = time.perf_counter()
+
+    async with httpx.AsyncClient() as client:
+        tasks = [scan_provider(client, p, creds, results) for p in PROVIDERS]
+        await asyncio.gather(*tasks)
+
+    wall_time = time.perf_counter() - wall_start
+    return results, wall_time, creds
+
+
+def render_table(results, wall_time, creds):
+    """Render the beautiful matrix table."""
+    # Column widths
+    label_w = 13
+    col_w = 11
+
+    # Count stats
+    n_pass = sum(1 for v in results.values() if v[0] == "pass")
+    n_fail = sum(1 for v in results.values() if v[0] in ("error", "auth", "missing"))
+    n_rate = sum(1 for v in results.values() if v[0] in ("rate", "quota"))
+    n_skip = sum(1 for v in results.values() if v[0] == "skip")
+    n_total = len(results)
+
+    # Header
+    print()
+    print(f"  {BOLD}{CYAN}cc scan{RESET} {DIM}— Claude Model Availability Matrix{RESET}")
+    print()
+
+    # Credential summary
+    cred_indicators = []
+    for p in PROVIDERS:
+        if p == "teams":
+            cred_indicators.append(f"{GRAY}OAuth{RESET}")
+        elif p == "direct":
+            cred_indicators.append(f"{GREEN}key{RESET}" if creds["direct"]["api_key"] else f"{RED}--{RESET}")
+        elif p == "bedrock":
+            cred_indicators.append(f"{GREEN}aws{RESET}" if creds["bedrock"]["access_key"] else f"{RED}--{RESET}")
+        elif p == "vertex":
+            tok = creds["vertex"].get("token", "")
+            gak = creds["vertex"].get("api_key", "")
+            if tok:
+                cred_indicators.append(f"{GREEN}token{RESET}")
+            elif gak:
+                cred_indicators.append(f"{GREEN}key{RESET}")
+            else:
+                cred_indicators.append(f"{RED}--{RESET}")
+        elif p == "foundry":
+            cred_indicators.append(f"{GREEN}key{RESET}" if creds["foundry"]["api_key"] else f"{RED}--{RESET}")
+
+    # Table top
+    sep = f"{'':>{label_w}} "
+    for i, p in enumerate(PROVIDERS):
+        sep += f"  {cred_indicators[i]:>18}"
+    print(f"  {DIM}Credentials:{RESET}{sep}")
+    print()
+
+    # Provider header row
+    header = f"  {HEADER_BG}{BOLD}{'':>{label_w}}{RESET}"
+    for p in PROVIDERS:
+        header += f" {HEADER_BG}{BOLD}{p:^{col_w}}{RESET}"
+    print(header)
+
+    # Separator
+    line = f"  {'':─>{label_w}}"
+    for _ in PROVIDERS:
+        line += f"─{'':─>{col_w}}"
+    print(f"  {DIM}{'─' * (label_w + (col_w + 1) * len(PROVIDERS))}{RESET}")
+
+    # Model rows
+    for tier in TIERS:
+        row = f"  {WHITE}{tier:>{label_w}}{RESET}"
+        for provider in PROVIDERS:
+            key = (provider, tier)
+            if key in results:
+                kind, color, label, ms, extra = results[key]
+                if kind == "pass":
+                    cell_text = f"✓ {ms:>4}ms"
+                    cell = f" {color}✓{RESET} {DIM}{ms:>4}ms{RESET}"
+                elif kind == "skip":
+                    cell_text = "  --   "
+                    cell = f" {GRAY}  --   {RESET}"
+                elif kind in ("rate", "quota"):
+                    cell_text = f"~ {label[:6]:<6}"
+                    cell = f" {color}~ {label[:6]:<6}{RESET}"
+                else:
+                    cell_text = f"✗ {label[:6]:<6}"
+                    cell = f" {color}✗ {label[:6]:<6}{RESET}"
+            else:
+                cell_text = "  ??   "
+                cell = f" {GRAY}  ??   {RESET}"
+            # Pad: col_w minus visible chars, then add the ANSI cell
+            pad = col_w - len(cell_text)
+            row += " " * max(0, pad) + cell
+        print(row)
+
+    # Bottom separator
+    print(f"  {DIM}{'─' * (label_w + (col_w + 1) * len(PROVIDERS))}{RESET}")
+
+    # Summary
+    summary_parts = []
+    if n_pass: summary_parts.append(f"{GREEN}{n_pass} pass{RESET}")
+    if n_fail: summary_parts.append(f"{RED}{n_fail} fail{RESET}")
+    if n_rate: summary_parts.append(f"{YELLOW}{n_rate} limited{RESET}")
+    if n_skip: summary_parts.append(f"{GRAY}{n_skip} skip{RESET}")
+
+    print(f"  {DIM}{len(PROVIDERS)} providers × {len(TIERS)} models = {n_total} checks{RESET}  │  {' · '.join(summary_parts)}")
+    print(f"  {DIM}Wall time: {wall_time:.1f}s (parallel){RESET}")
+
+    # Recommendations
+    if n_fail > 0 or n_rate > 0:
+        print()
+        # Find best provider (most passes, lowest avg latency)
+        provider_scores = {}
+        for p in PROVIDERS:
+            passes = sum(1 for t in TIERS if results.get((p, t), ("",))[0] == "pass")
+            avg_ms = 0
+            ms_count = 0
+            for t in TIERS:
+                r = results.get((p, t))
+                if r and r[0] == "pass" and r[3] > 0:
+                    avg_ms += r[3]
+                    ms_count += 1
+            avg_ms = avg_ms // ms_count if ms_count else 99999
+            provider_scores[p] = (passes, -avg_ms)
+
+        best = max((p for p in PROVIDERS if p != "teams"), key=lambda p: provider_scores[p])
+        bp = provider_scores[best]
+        if bp[0] > 0:
+            print(f"  {CYAN}Best provider: {BOLD}{best}{RESET}{CYAN} ({bp[0]}/{len(TIERS)} models, avg {-bp[1]}ms){RESET}")
+
+    print()
+
+
+def main():
+    results, wall_time, creds = asyncio.run(run_scan())
+    render_table(results, wall_time, creds)
+
+    # Exit code: 0 if any model passes, 1 if all fail
+    if any(v[0] == "pass" for v in results.values()):
+        sys.exit(0)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

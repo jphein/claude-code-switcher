@@ -29,7 +29,7 @@ _opus45_model() {
 
 _sonnet_model() {
   case "${1:-direct}" in
-    bedrock) echo "us.anthropic.claude-sonnet-4-6-v1" ;;
+    bedrock) echo "us.anthropic.claude-sonnet-4-6" ;;
     vertex)  echo "claude-sonnet-4-6" ;;
     *)       echo "claude-sonnet-4-6" ;;  # direct, foundry
   esac
@@ -510,6 +510,7 @@ case "$CMD" in
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
     echo "    cc check      Test connectivity for all providers"
+    echo "    cc scan       Full model matrix — test all models × all providers"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
     echo "    Hit Opus limits?   →  cc opus45  →  open new session"
@@ -517,6 +518,11 @@ case "$CMD" in
     echo "    Need cheapest?     →  cc haiku   →  open new session"
     echo "    Back to primary?   →  cc opus    →  open new session"
     echo ""
+    ;;
+
+  scan)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    exec python3 "${SCRIPT_DIR}/cc-scan" "$@"
     ;;
 
   *)

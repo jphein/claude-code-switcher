@@ -44,6 +44,7 @@ cc sonnet45         Sonnet 4.5 -- extended thinking
 cc haiku            Haiku 4.5  -- fastest, cheapest
 
 cc check            Test connectivity for all providers
+cc scan             Full model matrix — test all 5 models × 5 providers
 cc help             Show built-in help
 
 cc setup-teams      Info on Claude Teams OAuth
@@ -52,9 +53,30 @@ cc setup-bedrock    Configure AWS credentials
 cc setup-vertex     Authenticate with Google Cloud
 cc setup-foundry    Configure Azure AI Foundry
 
-cc-test             Run local state tests (53 checks)
+cc-test             Run local state tests (55 checks)
 cc-api-test         Test actual API connectivity per provider
 ```
+
+## Scan — Model Availability Matrix
+
+`cc scan` tests every Claude model against every provider in parallel and shows a color-coded matrix:
+
+```
+  cc scan — Claude Model Availability Matrix
+
+  Credentials:   OAuth    --    aws   token    key
+
+               teams    direct  bedrock  vertex  foundry
+  ──────────────────────────────────────────────────────
+     Opus 4.6    --       --   ✓ 1285ms   --      --
+     Opus 4.5    --       --   ✓  958ms   --      --
+   Sonnet 4.6    --       --   ✓  742ms   --      --
+   Sonnet 4.5    --       --   ✓ 1155ms   --      --
+    Haiku 4.5    --       --   ✓  765ms   --      --
+  ──────────────────────────────────────────────────────
+```
+
+Requires `httpx` (`pip install httpx`). Reads credentials from the same sources as `cc check` plus `~/.config/azure-chat-assistant/config.json` as fallback.
 
 ## Rate-Limit Workflow
 
@@ -84,7 +106,8 @@ Back to primary?   -->  cc opus    -->  open new session
 ```
 ~/Projects/claude-code-switcher/
     cc              Main script (added to PATH via install.sh)
-    cc-test         Local state test suite (53 checks)
+    cc-scan         Model availability matrix (Python, requires httpx)
+    cc-test         Local state test suite (55 checks)
     cc-api-test     API connectivity test
     install.sh      Adds project dir to PATH
     README.md       This doc
@@ -104,7 +127,7 @@ Back to primary?   -->  cc opus    -->  open new session
 | Provider | Opus 4.6 | Opus 4.5 | Sonnet 4.6 | Sonnet 4.5 | Haiku 4.5 |
 |----------|----------|----------|------------|------------|-----------|
 | teams/direct | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
-| bedrock | us.anthropic.claude-opus-4-6-v1 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-4-6-v1 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-4-5-20251001-v1:0 |
+| bedrock | us.anthropic.claude-opus-4-6-v1 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-4-6 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-4-5-20251001-v1:0 |
 | vertex | claude-opus-4-6 | claude-opus-4-5@20251101 | claude-sonnet-4-6 | claude-sonnet-4-5@20250929 | claude-haiku-4-5@20251001 |
 | foundry | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
 
@@ -117,6 +140,20 @@ Back to primary?   -->  cc opus    -->  open new session
 | bedrock  | CLAUDE_CODE_USE_BEDROCK=1, AWS_REGION=us-west-1 |
 | vertex   | CLAUDE_CODE_USE_VERTEX=1, CLOUD_ML_REGION=us-east5, ANTHROPIC_VERTEX_PROJECT_ID |
 | foundry  | ANTHROPIC_BASE_URL=\<azure endpoint\> |
+
+## Terminal Flash Fix
+
+Claude Code's spinner and progress updates can trigger terminal bells, causing screen flashes. Run once to fix:
+
+```bash
+./fix-terminal-flash.sh
+```
+
+This disables:
+- GNOME Terminal cursor/text blinking
+- System visual/audible bells
+- Shell bell-style
+- tmux bells (if using tmux)
 
 ## Prerequisites
 

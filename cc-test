@@ -160,6 +160,13 @@ check "shows teams"    "teams"    "$CHECK_OUT"
 check "shows bedrock"  "bedrock"  "$CHECK_OUT"
 check "shows vertex"   "vertex"   "$CHECK_OUT"
 
+# -- cc scan (offline checks) ------------------------------------------------
+echo ""
+echo "[ cc scan ]"
+[[ -x "${SCRIPT_DIR}/cc-scan" ]] && ok "cc-scan is executable" || fail "cc-scan not executable"
+HELP_OUT=$("$CC" help 2>&1)
+check "help mentions cc scan"  "cc scan"  "$HELP_OUT"
+
 # -- cc <unknown> -------------------------------------------------------------
 echo ""
 echo "[ cc unknown ]"
