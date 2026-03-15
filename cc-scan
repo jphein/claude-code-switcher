@@ -138,15 +138,20 @@ def load_credentials():
         creds["bedrock"]["secret_key"] = sk
 
     # Vertex: try gcloud for token
-    gcloud = os.path.expanduser("~/google-cloud-sdk/bin/gcloud")
+    import shutil
+    gcloud = shutil.which("gcloud") or os.path.expanduser("~/google-cloud-sdk/bin/gcloud")
     if os.path.exists(gcloud):
         try:
-            token = subprocess.check_output([gcloud, "auth", "print-access-token"], timeout=10, stderr=subprocess.DEVNULL).decode().strip()
+            token = subprocess.check_output([gcloud, "auth", "print-access-token"], timeout=10, stderr=subprocess.PIPE).decode().strip()
             project = subprocess.check_output([gcloud, "config", "get-value", "project"], timeout=5, stderr=subprocess.DEVNULL).decode().strip()
             creds["vertex"]["token"] = token
             creds["vertex"]["project"] = project
+        except subprocess.CalledProcessError:
+            creds["vertex"]["_error"] = "auth-expired"
         except Exception:
-            pass
+            creds["vertex"]["_error"] = "gcloud-error"
+    else:
+        creds["vertex"]["_error"] = "no-gcloud"
 
     # Foundry: from env file
     foundry_env = _load_env_file(os.path.expanduser("~/.config/claude-code/foundry.env"))
@@ -288,16 +293,16 @@ def classify(status_code, body=""):
         return "rate", YELLOW, "rate-limited"
     if status_code in (401, 403):
         if "invalid subscription" in body_lower or "wrong api endpoint" in body_lower:
-            return "skip", GRAY, "no-deploy"
+            return "nodeploy", YELLOW, "no-deploy"
         return "auth", RED, "auth-fail"
     if status_code == 404:
         if "not found" in body_lower or "not available" in body_lower:
-            return "missing", RED, "not-available"
+            return "missing", RED, "not-avail"
         return "missing", RED, "not-found"
     if "quota" in body_lower or "resource_exhausted" in body_lower:
         return "quota", YELLOW, "no-quota"
     if "not enabled" in body_lower or "not available" in body_lower:
-        return "missing", RED, "not-enabled"
+        return "missing", RED, "not-enabl"
     if status_code == 0:
         return "skip", GRAY, "no-creds"
     if 400 <= status_code < 500:
@@ -339,8 +344,10 @@ async def scan_provider(client, provider, creds, results):
             elif provider == "vertex":
                 tok = creds["vertex"].get("token", "")
                 gak = creds["vertex"].get("api_key", "")
+                vtx_err = creds["vertex"].get("_error", "")
                 if not tok and not gak:
-                    results[key] = ("skip", GRAY, "--", 0, "no creds")
+                    label = vtx_err or "no creds"
+                    results[key] = ("skip", GRAY, label, 0, label)
                     continue
                 code, ms, body = await test_vertex(client, model_id, creds["vertex"])
 
@@ -389,7 +396,7 @@ def render_table(results, wall_time, creds):
     n_pass = sum(1 for v in results.values() if v[0] == "pass")
     n_fail = sum(1 for v in results.values() if v[0] in ("error", "auth", "missing"))
     n_rate = sum(1 for v in results.values() if v[0] in ("rate", "quota"))
-    n_skip = sum(1 for v in results.values() if v[0] == "skip")
+    n_skip = sum(1 for v in results.values() if v[0] in ("skip", "nodeploy"))
     n_total = len(results)
 
     # Header
@@ -408,11 +415,13 @@ def render_table(results, wall_time, creds):
             cred_indicators.append(f"{GREEN}aws{RESET}" if creds["bedrock"]["access_key"] else f"{RED}--{RESET}")
         elif p == "vertex":
             tok = creds["vertex"].get("token", "")
-            gak = creds["vertex"].get("api_key", "")
+            vtx_err = creds["vertex"].get("_error", "")
             if tok:
                 cred_indicators.append(f"{GREEN}token{RESET}")
-            elif gak:
-                cred_indicators.append(f"{GREEN}key{RESET}")
+            elif vtx_err == "auth-expired":
+                cred_indicators.append(f"{YELLOW}expired{RESET}")
+            elif vtx_err == "no-gcloud":
+                cred_indicators.append(f"{RED}no-cli{RESET}")
             else:
                 cred_indicators.append(f"{RED}--{RESET}")
         elif p == "foundry":
@@ -448,8 +457,16 @@ def render_table(results, wall_time, creds):
                     cell_text = f"✓ {ms:>4}ms"
                     cell = f" {color}✓{RESET} {DIM}{ms:>4}ms{RESET}"
                 elif kind == "skip":
-                    cell_text = "  --   "
-                    cell = f" {GRAY}  --   {RESET}"
+                    if label and label not in ("--", "no creds", "OAuth"):
+                        short = label[:7]
+                        cell_text = f"{short:^8}"
+                        cell = f" {YELLOW}{short:^8}{RESET}"
+                    else:
+                        cell_text = "  --   "
+                        cell = f" {GRAY}  --   {RESET}"
+                elif kind == "nodeploy":
+                    cell_text = "no-dply"
+                    cell = f" {YELLOW}no-dply{RESET}"
                 elif kind in ("rate", "quota"):
                     cell_text = f"~ {label[:6]:<6}"
                     cell = f" {color}~ {label[:6]:<6}{RESET}"
@@ -477,27 +494,51 @@ def render_table(results, wall_time, creds):
     print(f"  {DIM}{len(PROVIDERS)} providers × {len(TIERS)} models = {n_total} checks{RESET}  │  {' · '.join(summary_parts)}")
     print(f"  {DIM}Wall time: {wall_time:.1f}s (parallel){RESET}")
 
-    # Recommendations
-    if n_fail > 0 or n_rate > 0:
-        print()
-        # Find best provider (most passes, lowest avg latency)
-        provider_scores = {}
-        for p in PROVIDERS:
-            passes = sum(1 for t in TIERS if results.get((p, t), ("",))[0] == "pass")
-            avg_ms = 0
-            ms_count = 0
-            for t in TIERS:
-                r = results.get((p, t))
-                if r and r[0] == "pass" and r[3] > 0:
-                    avg_ms += r[3]
-                    ms_count += 1
-            avg_ms = avg_ms // ms_count if ms_count else 99999
-            provider_scores[p] = (passes, -avg_ms)
+    # Best provider recommendation
+    provider_scores = {}
+    for p in PROVIDERS:
+        passes = sum(1 for t in TIERS if results.get((p, t), ("",))[0] == "pass")
+        avg_ms = 0
+        ms_count = 0
+        for t in TIERS:
+            r = results.get((p, t))
+            if r and r[0] == "pass" and r[3] > 0:
+                avg_ms += r[3]
+                ms_count += 1
+        avg_ms = avg_ms // ms_count if ms_count else 99999
+        provider_scores[p] = (passes, -avg_ms)
 
-        best = max((p for p in PROVIDERS if p != "teams"), key=lambda p: provider_scores[p])
-        bp = provider_scores[best]
-        if bp[0] > 0:
-            print(f"  {CYAN}Best provider: {BOLD}{best}{RESET}{CYAN} ({bp[0]}/{len(TIERS)} models, avg {-bp[1]}ms){RESET}")
+    best = max((p for p in PROVIDERS if p != "teams"), key=lambda p: provider_scores[p])
+    bp = provider_scores[best]
+    if bp[0] > 0:
+        print(f"  {CYAN}Best provider: {BOLD}{best}{RESET}{CYAN} ({bp[0]}/{len(TIERS)} models, avg {-bp[1]}ms){RESET}")
+
+    # Hints for non-working providers
+    hints = []
+    vtx_err = creds["vertex"].get("_error", "")
+    vtx_pass = any(results.get(("vertex", t), ("",))[0] == "pass" for t in TIERS)
+    fnd_nodeploy = any(results.get(("foundry", t), ("",))[0] == "nodeploy" for t in TIERS)
+    fnd_nocreds = not creds["foundry"]["api_key"]
+    direct_nocreds = not creds["direct"]["api_key"]
+
+    if vtx_err == "auth-expired":
+        hints.append(f"{YELLOW}vertex{RESET}:  run {BOLD}gcloud auth login{RESET} to refresh expired token")
+    elif vtx_err == "no-gcloud":
+        hints.append(f"{YELLOW}vertex{RESET}:  install gcloud CLI → {DIM}https://cloud.google.com/sdk/docs/install{RESET}")
+    elif not vtx_pass and not vtx_err:
+        hints.append(f"{YELLOW}vertex{RESET}:  enable Claude via Anthropic publisher on Vertex AI")
+    if fnd_nodeploy:
+        hints.append(f"{YELLOW}foundry{RESET}: deploy Claude model in Azure AI Foundry → {DIM}https://ai.azure.com{RESET}")
+    elif fnd_nocreds:
+        hints.append(f"{YELLOW}foundry{RESET}: run {BOLD}cc setup-foundry{RESET} to configure Azure endpoint + key")
+    if direct_nocreds:
+        hints.append(f"{YELLOW}direct{RESET}:  run {BOLD}cc setup-direct{RESET} to add Anthropic API key")
+
+    if hints:
+        print()
+        print(f"  {DIM}Hints:{RESET}")
+        for h in hints:
+            print(f"    {h}")
 
     print()
 
