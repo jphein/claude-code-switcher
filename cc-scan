@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""cc-scan — Test all Claude models across all providers with a beautiful matrix table.
+"""cc-scan — Test models across all providers with a beautiful matrix table.
+
+Usage:
+  cc scan          Test Claude models only (5 tiers × 5 providers)
+  cc scan --all    Test all models (Claude + Azure serverless + Bedrock + Google)
 
 Loads credentials from:
   - ~/.config/claude-code/direct.env (ANTHROPIC_API_KEY)
@@ -7,8 +11,6 @@ Loads credentials from:
   - ~/.aws/credentials (aws_access_key_id, aws_secret_access_key)
   - ~/.config/azure-chat-assistant/config.json (fallback for all platforms)
   - gcloud auth print-access-token (Vertex AI)
-
-Tests all 5 model tiers × 5 providers = 25 checks in parallel.
 """
 
 import asyncio
@@ -81,6 +83,36 @@ MODELS["teams"] = MODELS["direct"]
 
 PROVIDERS = ["teams", "direct", "bedrock", "vertex", "foundry"]
 
+# ── Extended model catalogs (for --all mode) ────────────────────────────────
+
+# Azure AI Foundry serverless models
+AZURE_SERVERLESS = [
+    "grok-3", "grok-3-mini",
+    "DeepSeek-R1",
+    "Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-8B-Instruct",
+    "Llama-3.2-11B-Vision-Instruct", "Llama-3.2-90B-Vision-Instruct",
+    "Phi-4",
+    "Cohere-command-r-plus-08-2024", "Cohere-command-r-08-2024",
+    "Codestral-2501", "Ministral-3B",
+    "o1", "o4-mini",  # reasoning models
+]
+
+# AWS Bedrock additional models
+BEDROCK_EXTRA = {
+    "nova-pro": "us.amazon.nova-pro-v1:0",
+    "nova-lite": "us.amazon.nova-lite-v1:0",
+    "llama4-maverick": "us.meta.llama4-maverick-17b-instruct-v1:0",
+    "llama4-scout": "us.meta.llama4-scout-17b-instruct-v1:0",
+    "mistral-large": "mistral.mistral-large-2407-v1:0",
+}
+
+# Google Vertex AI models
+GOOGLE_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
+]
+
 # ── Credential loading ───────────────────────────────────────────────────────
 
 def _load_env_file(path):
@@ -125,6 +157,7 @@ def load_credentials():
         "vertex": {"token": "", "project": "", "region": "us-east5"},
         "foundry": {"endpoint": "", "api_key": ""},
         "teams": {"available": False},
+        "google": {"api_key": ""},
     }
 
     # Direct: from env file or environment
@@ -171,6 +204,8 @@ def load_credentials():
             creds["foundry"]["api_key"] = ca.get("api_key", "")
         # Note: Google API key from chat assistant is for Gemini, not Claude on Vertex.
         # Claude on Vertex requires gcloud OAuth token + anthropic publisher endpoint.
+        if ca.get("google_api_key"):
+            creds["google"]["api_key"] = ca["google_api_key"]
 
     return creds
 
@@ -276,6 +311,49 @@ async def test_foundry(client, model_id, endpoint, api_key):
         "model": model_id, "max_tokens": 1, "anthropic_version": "2023-06-01",
         "messages": [{"role": "user", "content": "hi"}],
     })
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_azure_serverless(client, model_id, endpoint, api_key):
+    """Test Azure AI Foundry serverless model (OpenAI-compatible)."""
+    base = endpoint.rstrip("/").removesuffix("/models")
+    # o1/o4 models need different api version
+    version = "2024-12-01-preview" if any(p in model_id.lower() for p in ("o1", "o4")) else "2024-05-01-preview"
+    url = f"{base}/models/chat/completions?api-version={version}"
+    headers = {"api-key": api_key, "content-type": "application/json"}
+    body = json.dumps({
+        "model": model_id, "max_tokens": 10,
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_google(client, model_id, api_key):
+    """Test Google Gemini via API key."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
+    headers = {"content-type": "application/json"}
+    body = json.dumps({"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": {"maxOutputTokens": 10}})
+    t0 = time.perf_counter()
+    resp = await client.post(url, content=body, headers=headers, timeout=30.0)
+    latency = int((time.perf_counter() - t0) * 1000)
+    return resp.status_code, latency, resp.text[:200]
+
+
+async def test_bedrock_extra(client, model_id, access_key, secret_key, region):
+    """Test Bedrock non-Claude models via Converse API."""
+    body = json.dumps({
+        "modelId": model_id,
+        "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+        "inferenceConfig": {"maxTokens": 10, "temperature": 1.0},
+    })
+    url = f"https://bedrock-runtime.{region}.amazonaws.com/model/{quote(model_id, safe='')}/converse"
+    headers = _aws_sign("POST", url, body, region, access_key, secret_key)
     t0 = time.perf_counter()
     resp = await client.post(url, content=body, headers=headers, timeout=30.0)
     latency = int((time.perf_counter() - t0) * 1000)
@@ -543,9 +621,181 @@ def render_table(results, wall_time, creds):
     print()
 
 
+async def scan_extended(creds):
+    """Scan all models including Azure serverless, Bedrock extras, and Google."""
+    results = {}
+    wall_start = time.perf_counter()
+
+    async with httpx.AsyncClient() as client:
+        tasks = []
+
+        # Azure serverless models
+        ep = creds["foundry"]["endpoint"]
+        ak = creds["foundry"]["api_key"]
+        if ep and ak:
+            for model in AZURE_SERVERLESS:
+                tasks.append(scan_single(client, "azure", model, creds, results))
+
+        # Bedrock extra models
+        bak = creds["bedrock"]["access_key"]
+        bsk = creds["bedrock"]["secret_key"]
+        if bak and bsk:
+            for name, model_id in BEDROCK_EXTRA.items():
+                tasks.append(scan_single(client, "bedrock-x", name, creds, results, model_id))
+
+        # Google models
+        gak = creds.get("google", {}).get("api_key", "")
+        if gak:
+            for model in GOOGLE_MODELS:
+                tasks.append(scan_single(client, "google", model, creds, results))
+
+        await asyncio.gather(*tasks)
+
+    wall_time = time.perf_counter() - wall_start
+    return results, wall_time
+
+
+async def scan_single(client, provider, model, creds, results, model_id=None):
+    """Test a single model."""
+    key = (provider, model)
+    model_id = model_id or model
+    try:
+        if provider == "azure":
+            ep = creds["foundry"]["endpoint"]
+            ak = creds["foundry"]["api_key"]
+            code, ms, body = await test_azure_serverless(client, model_id, ep, ak)
+        elif provider == "bedrock-x":
+            ak = creds["bedrock"]["access_key"]
+            sk = creds["bedrock"]["secret_key"]
+            region = creds["bedrock"]["region"]
+            code, ms, body = await test_bedrock_extra(client, model_id, ak, sk, region)
+        elif provider == "google":
+            gak = creds.get("google", {}).get("api_key", "")
+            code, ms, body = await test_google(client, model_id, gak)
+        else:
+            results[key] = ("skip", GRAY, "--", 0, "unknown")
+            return
+
+        kind, color, label = classify(code, body)
+        results[key] = (kind, color, label, ms, "")
+    except httpx.TimeoutException:
+        results[key] = ("error", RED, "timeout", 0, "")
+    except Exception as e:
+        results[key] = ("error", RED, "error", 0, str(e)[:40])
+
+
+def render_extended(results, wall_time, creds):
+    """Render extended model scan results."""
+    print()
+    print(f"  {BOLD}{CYAN}cc scan --all{RESET} {DIM}— Extended Model Availability{RESET}")
+    print()
+
+    # Group by provider
+    providers = {"azure": [], "bedrock-x": [], "google": []}
+    for (prov, model), res in sorted(results.items()):
+        if prov in providers:
+            providers[prov].append((model, res))
+
+    for prov, models in providers.items():
+        if not models:
+            continue
+        prov_name = {"azure": "Azure Serverless", "bedrock-x": "AWS Bedrock", "google": "Google Gemini"}[prov]
+        print(f"  {BOLD}{prov_name}{RESET}")
+        for model, (kind, color, label, ms, _) in models:
+            if kind == "pass":
+                status = f"{GREEN}✓{RESET} {DIM}{ms:>4}ms{RESET}"
+            elif kind == "skip":
+                status = f"{GRAY}--{RESET}"
+            elif kind in ("rate", "quota"):
+                status = f"{YELLOW}~ {label}{RESET}"
+            else:
+                status = f"{RED}✗ {label}{RESET}"
+            print(f"    {model:<35} {status}")
+        print()
+
+    # Summary
+    n_pass = sum(1 for v in results.values() if v[0] == "pass")
+    n_fail = sum(1 for v in results.values() if v[0] in ("error", "auth", "missing"))
+    n_total = len(results)
+    print(f"  {DIM}{n_total} models tested | {GREEN}{n_pass} pass{RESET} | {DIM}Wall time: {wall_time:.1f}s{RESET}")
+    print()
+
+
+async def list_catalog(creds):
+    """List all deployable models from provider catalogs."""
+    print()
+    print(f"  {BOLD}{CYAN}cc scan --catalog{RESET} {DIM}— Deployable Models{RESET}")
+    print()
+
+    # Bedrock foundation models
+    ak = creds["bedrock"]["access_key"]
+    sk = creds["bedrock"]["secret_key"]
+    region = creds["bedrock"]["region"]
+    if ak and sk:
+        print(f"  {BOLD}AWS Bedrock{RESET} {DIM}(foundation models){RESET}")
+        try:
+            url = f"https://bedrock.{region}.amazonaws.com/foundation-models"
+            body = ""
+            headers = _aws_sign("GET", url, body, region, ak, sk)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=headers, timeout=30.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = data.get("modelSummaries", [])
+                    # Group by provider
+                    by_provider = {}
+                    for m in models:
+                        prov = m.get("providerName", "Unknown")
+                        name = m.get("modelId", "")
+                        if prov not in by_provider:
+                            by_provider[prov] = []
+                        by_provider[prov].append(name)
+                    for prov in sorted(by_provider.keys()):
+                        print(f"    {CYAN}{prov}{RESET}: {len(by_provider[prov])} models")
+                        for m in sorted(by_provider[prov])[:5]:
+                            print(f"      {DIM}{m}{RESET}")
+                        if len(by_provider[prov]) > 5:
+                            print(f"      {DIM}... +{len(by_provider[prov])-5} more{RESET}")
+                else:
+                    print(f"    {RED}Error: {resp.status_code}{RESET}")
+        except Exception as e:
+            print(f"    {RED}Error: {e}{RESET}")
+        print()
+
+    # Azure - just show known serverless models
+    if creds["foundry"]["api_key"]:
+        print(f"  {BOLD}Azure AI Foundry{RESET} {DIM}(serverless){RESET}")
+        for m in AZURE_SERVERLESS:
+            print(f"    {DIM}{m}{RESET}")
+        print()
+
+    # Google
+    gak = creds.get("google", {}).get("api_key", "")
+    if gak:
+        print(f"  {BOLD}Google Gemini{RESET}")
+        for m in GOOGLE_MODELS:
+            print(f"    {DIM}{m}{RESET}")
+        print()
+
+
 def main():
+    # Parse args
+    scan_all = "--all" in sys.argv
+    show_catalog = "--catalog" in sys.argv
+
+    if show_catalog:
+        creds = load_credentials()
+        asyncio.run(list_catalog(creds))
+        sys.exit(0)
+
+    # Run Claude scan (default)
     results, wall_time, creds = asyncio.run(run_scan())
     render_table(results, wall_time, creds)
+
+    # If --all, also run extended scan
+    if scan_all:
+        ext_results, ext_time = asyncio.run(scan_extended(creds))
+        render_extended(ext_results, ext_time, creds)
 
     # Exit code: 0 if any model passes, 1 if all fail
     if any(v[0] == "pass" for v in results.values()):
