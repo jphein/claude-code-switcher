@@ -57,6 +57,6 @@ cc bedrock   # Bedrock typically has all models
 
 After any switch: open a new Claude Code session for it to take effect.
 
-## Integration with azure-chat-assistant
+## Integration with cloud-chat-assistant
 
-The `cc-scan` script reads credentials from `~/.config/azure-chat-assistant/config.json` as fallback when provider-specific credential files are missing. This means AWS/Azure creds configured for the chat assistant are automatically available to `cc scan`.
+The `cc-scan` script reads credentials from `~/.config/cloud-chat-assistant/config.json` as fallback when provider-specific credential files are missing. This means AWS/Azure creds configured for the chat assistant are automatically available to `cc scan`.

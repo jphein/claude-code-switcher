@@ -5,7 +5,7 @@ Loads credentials from:
   - ~/.config/claude-code/direct.env (ANTHROPIC_API_KEY)
   - ~/.config/claude-code/foundry.env (AZURE_FOUNDRY_ENDPOINT, AZURE_ANTHROPIC_API_KEY)
   - ~/.aws/credentials (aws_access_key_id, aws_secret_access_key)
-  - ~/.config/azure-chat-assistant/config.json (fallback for all platforms)
+  - ~/.config/cloud-chat-assistant/config.json (fallback for all platforms)
   - gcloud auth print-access-token (Vertex AI)
 
 Tests all 5 model tiers × 5 providers = 25 checks in parallel.
@@ -110,7 +110,7 @@ def _load_aws_creds():
 
 def _load_chat_assistant_config():
     """Load the chat assistant config as fallback credentials."""
-    path = os.path.expanduser("~/.config/azure-chat-assistant/config.json")
+    path = os.path.expanduser("~/.config/cloud-chat-assistant/config.json")
     if os.path.exists(path):
         with open(path) as f:
             return json.load(f)

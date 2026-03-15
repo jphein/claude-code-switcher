@@ -76,7 +76,7 @@ cc-api-test         Test actual API connectivity per provider
   ──────────────────────────────────────────────────────
 ```
 
-Requires `httpx` (`pip install httpx`). Reads credentials from the same sources as `cc check` plus `~/.config/azure-chat-assistant/config.json` as fallback.
+Requires `httpx` (`pip install httpx`). Reads credentials from the same sources as `cc check` plus `~/.config/cloud-chat-assistant/config.json` as fallback.
 
 ## Rate-Limit Workflow
 
