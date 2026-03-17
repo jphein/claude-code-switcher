@@ -403,8 +403,11 @@ case "$CMD" in
     _set_model "$model"
     echo ""
     echo "  → Switched to ${provider}"
-    echo "    Env vars written to: ${ENV_FILE}"
-    echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    # If called via shell function wrapper (bashrc cc()), env is auto-sourced.
+    # If called directly, remind user to source.
+    if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
+      echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    fi
     echo ""
     ;;
 
