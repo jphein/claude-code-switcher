@@ -1,3 +1,4 @@
+<!-- claude-md-version: 40d77cb | updated: 2026-03-22 -->
 # Claude Code Switcher
 
 CLI tool for switching Claude Code between API providers and model tiers.
