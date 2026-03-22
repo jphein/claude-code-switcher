@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: teams | direct | bedrock | vertex | foundry | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
+# Commands: teams | direct | bedrock | vertex | foundry | ollama [MODEL] | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
 ENV_FILE="${CONFIG_DIR}/env.sh"
 SETTINGS="${HOME}/.claude/settings.json"
-GCLOUD="${HOME}/google-cloud-sdk/bin/gcloud"
+GCLOUD=$(command -v gcloud 2>/dev/null || echo "${HOME}/google-cloud-sdk/bin/gcloud")
 
 mkdir -p "$CONFIG_DIR"
 
@@ -51,6 +51,26 @@ _haiku_model() {
   esac
 }
 
+# ── Ollama config helpers ─────────────────────────────────────────────────────
+_ollama_env() { echo "${CONFIG_DIR}/ollama.env"; }
+
+_ollama_var() {
+  local key="$1" default="${2:-}"
+  local env_file; env_file=$(_ollama_env)
+  if [[ -f "$env_file" ]]; then
+    local val
+    val=$(sed -n "s/^export *${key}=[\"']*\([^\"']*\)[\"']*/\1/p" "$env_file" | tail -1)
+    [[ -n "$val" ]] && echo "$val" && return
+  fi
+  echo "$default"
+}
+
+_ollama_default_model()  { _ollama_var OLLAMA_MODEL "qwen3-coder"; }
+_ollama_url()            { _ollama_var OLLAMA_URL "http://localhost:11434"; }
+_ollama_opus_model()     { _ollama_var OLLAMA_OPUS_MODEL "$(_ollama_default_model)"; }
+_ollama_sonnet_model()   { _ollama_var OLLAMA_SONNET_MODEL "$(_ollama_default_model)"; }
+_ollama_haiku_model()    { _ollama_var OLLAMA_HAIKU_MODEL "$(_ollama_default_model)"; }
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 _active() { cat "$ACTIVE_FILE" 2>/dev/null || echo "direct"; }
 
@@ -77,7 +97,8 @@ _write_env() {
   local provider="$1"
   {
     echo "# Claude Code active backend: ${provider} ($(date '+%Y-%m-%d %H:%M'))"
-    echo "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX ANTHROPIC_BASE_URL"
+    echo "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN"
+    echo "unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL"
     echo "export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1  # Let shell set title (for hostname-in-title)"
     case "$provider" in
       bedrock)
@@ -115,8 +136,20 @@ _write_env() {
         # OAuth-based Claude Teams — clear API key so Claude Code uses browser login
         echo "unset ANTHROPIC_API_KEY"
         ;;
+      ollama)
+        # Local Ollama — Anthropic-compatible API (requires Ollama v0.14+)
+        local url; url=$(_ollama_url)
+        echo "unset ANTHROPIC_API_KEY"
+        echo "export ANTHROPIC_BASE_URL=${url}"
+        echo "export ANTHROPIC_AUTH_TOKEN=ollama"
+        echo "export ANTHROPIC_MODEL=$(_ollama_default_model)"
+        echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=$(_ollama_opus_model)"
+        echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=$(_ollama_sonnet_model)"
+        echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$(_ollama_haiku_model)"
+        ;;
     esac
   } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
 }
 
 _probe_http() {
@@ -204,6 +237,16 @@ _check() {
   else
     names+=("foundry"); statuses+=("skip:No endpoint/key")
   fi
+
+  # ollama
+  local ollama_url; ollama_url=$(_ollama_url)
+  local code
+  code=$(_probe_http "${ollama_url}/v1/messages" \
+    -H "x-api-key: ollama" \
+    -H "anthropic-version: 2023-06-01" \
+    -H "content-type: application/json" \
+    -d '{"model":"'"$(_ollama_default_model)"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+  names+=("ollama"); statuses+=("$code")
 
   # Render table
   local nw=28 sw=32
@@ -358,6 +401,74 @@ _setup_teams() {
   echo ""
 }
 
+_setup_ollama() {
+  echo ""
+  echo "  Ollama Setup (requires Ollama v0.14+)"
+  echo "  ──────────────────────────────────────"
+  echo ""
+
+  # Check if ollama is installed
+  if ! command -v ollama &>/dev/null; then
+    echo "  ✗ Ollama not found. Install: https://ollama.com/download"
+    return 1
+  fi
+
+  local version
+  version=$(ollama --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
+  echo "  Found Ollama ${version:-unknown}"
+
+  read -p "  Ollama URL [http://localhost:11434]: " ollama_url
+  ollama_url="${ollama_url:-http://localhost:11434}"
+
+  # List available models if Ollama is running
+  echo ""
+  if curl -s "${ollama_url}/api/tags" >/dev/null 2>&1; then
+    echo "  Available models:"
+    curl -s "${ollama_url}/api/tags" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for m in d.get('models', []):
+    size = m.get('size', 0) / 1e9
+    print(f'    {m[\"name\"]:35s} {size:.1f} GB')
+" 2>/dev/null || echo "    (could not list models)"
+    echo ""
+  else
+    echo "  ⚠ Ollama not reachable at ${ollama_url} — start it with: ollama serve"
+    echo ""
+  fi
+
+  read -p "  Default model [qwen3-coder]: " ollama_model
+  ollama_model="${ollama_model:-qwen3-coder}"
+
+  echo ""
+  echo "  Tier mapping (optional — maps cc opus/sonnet/haiku to Ollama models)"
+  echo "  Press Enter to use default model for all tiers."
+  read -p "  Opus model [${ollama_model}]: " opus_model
+  opus_model="${opus_model:-${ollama_model}}"
+  read -p "  Sonnet model [${ollama_model}]: " sonnet_model
+  sonnet_model="${sonnet_model:-${ollama_model}}"
+  read -p "  Haiku model [${ollama_model}]: " haiku_model
+  haiku_model="${haiku_model:-${ollama_model}}"
+
+  local ollama_env="${CONFIG_DIR}/ollama.env"
+  cat > "$ollama_env" <<EOF
+# Ollama configuration (sourced by cc ollama)
+export OLLAMA_URL="${ollama_url}"
+export OLLAMA_MODEL="${ollama_model}"
+export OLLAMA_OPUS_MODEL="${opus_model}"
+export OLLAMA_SONNET_MODEL="${sonnet_model}"
+export OLLAMA_HAIKU_MODEL="${haiku_model}"
+EOF
+  chmod 600 "$ollama_env"
+
+  echo ""
+  echo "  ✓ Ollama config saved to ${ollama_env}"
+  echo ""
+  echo "  Run 'cc ollama' to switch to Ollama"
+  echo "  Run 'cc ollama MODEL' to switch and override the model"
+  echo ""
+}
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 _status() {
   local provider; provider=$(_active)
@@ -370,6 +481,7 @@ _status() {
     bedrock) echo "  ║  Provider : Amazon Bedrock (us-west-1)  ║" ;;
     vertex)  echo "  ║  Provider : Google Vertex AI            ║" ;;
     foundry) echo "  ║  Provider : Azure AI Foundry            ║" ;;
+    ollama)  echo "  ║  Provider : Ollama (local)               ║" ;;
   esac
   echo "  ║  Model    : ${model}"
   case "$model" in
@@ -380,7 +492,7 @@ _status() {
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
-  echo "  Providers : cc teams | direct | bedrock | vertex | foundry"
+  echo "  Providers : cc teams | direct | bedrock | vertex | foundry | ollama"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo "  Diagnose  : cc check"
   echo ""
@@ -405,6 +517,38 @@ case "$CMD" in
     echo "  → Switched to ${provider}"
     # If called via shell function wrapper (bashrc cc()), env is auto-sourced.
     # If called directly, remind user to source.
+    if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
+      echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    fi
+    echo ""
+    ;;
+
+  ollama)
+    provider="ollama"
+    # Optional model override: cc ollama deepseek-r1:70b
+    if [[ -n "${2:-}" ]]; then
+      ollama_env=$(_ollama_env)
+      if [[ -f "$ollama_env" ]]; then
+        sed -i "s|^export OLLAMA_MODEL=.*|export OLLAMA_MODEL=\"${2}\"|" "$ollama_env"
+      else
+        mkdir -p "$CONFIG_DIR"
+        cat > "$ollama_env" <<EOF
+export OLLAMA_URL="http://localhost:11434"
+export OLLAMA_MODEL="${2}"
+export OLLAMA_OPUS_MODEL="${2}"
+export OLLAMA_SONNET_MODEL="${2}"
+export OLLAMA_HAIKU_MODEL="${2}"
+EOF
+        chmod 600 "$ollama_env"
+      fi
+    fi
+    ollama_model=$(_ollama_default_model)
+    echo "$provider" > "$ACTIVE_FILE"
+    _write_env "$provider"
+    _set_model "$ollama_model"
+    echo ""
+    echo "  → Switched to Ollama (model: ${ollama_model})"
+    echo "    URL: $(_ollama_url)"
     if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
       echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
     fi
@@ -470,6 +614,10 @@ case "$CMD" in
     _setup_teams
     ;;
 
+  setup-ollama)
+    _setup_ollama
+    ;;
+
   setup)
     echo ""
     echo "  cc setup-teams     Info on Claude Teams OAuth login"
@@ -477,6 +625,7 @@ case "$CMD" in
     echo "  cc setup-bedrock   Configure AWS credentials for Bedrock"
     echo "  cc setup-vertex    Authenticate with Google Cloud"
     echo "  cc setup-foundry   Configure Azure AI Foundry endpoint"
+    echo "  cc setup-ollama    Configure local Ollama instance"
     echo ""
     ;;
 
@@ -494,6 +643,7 @@ case "$CMD" in
     echo "    cc setup-bedrock   Configure AWS credentials"
     echo "    cc setup-vertex    Authenticate with Google Cloud"
     echo "    cc setup-foundry   Configure Azure AI Foundry"
+    echo "    cc setup-ollama    Configure local Ollama"
     echo ""
     echo "  PROVIDERS"
     echo "    cc teams      Claude Teams (OAuth browser login)  [default]"
@@ -501,6 +651,8 @@ case "$CMD" in
     echo "    cc bedrock    Amazon Bedrock (us-west-1)"
     echo "    cc vertex     Google Vertex AI"
     echo "    cc foundry    Azure AI Foundry"
+    echo "    cc ollama     Ollama local models (v0.14+)"
+    echo "    cc ollama MODEL  Switch + set model (e.g. cc ollama deepseek-r1:70b)"
     echo ""
     echo "  MODEL TIER  (within current provider)"
     echo "    cc opus       Opus 4.6   — primary"
@@ -514,6 +666,7 @@ case "$CMD" in
     echo "    cc status     Same as above"
     echo "    cc check      Test connectivity for all providers"
     echo "    cc scan       Claude model matrix (5 tiers × 5 providers)"
+    echo "    cc version    Show version"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
     echo "    Hit Opus limits?   →  cc opus45  →  open new session"
@@ -526,6 +679,10 @@ case "$CMD" in
   scan)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     exec python3 "${SCRIPT_DIR}/cc-scan" "$@"
+    ;;
+
+  version)
+    echo "claude-code-switcher v1.0.0"
     ;;
 
   *)

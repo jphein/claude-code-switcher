@@ -85,9 +85,52 @@ check_empty "env.sh: no BEDROCK export"  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')
 check_empty "env.sh: no VERTEX export"   "$(envgrep 'CLAUDE_CODE_USE_VERTEX=1')"
 check "settings.json: opus model"        "opus"                          "$(model)"
 
+# -- cc ollama ----------------------------------------------------------------
+echo ""
+echo "[ cc ollama ]"
+# Create minimal ollama.env for testing
+OLLAMA_ENV="${HOME}/.config/claude-code/ollama.env"
+OLLAMA_BAK=""
+[[ -f "$OLLAMA_ENV" ]] && OLLAMA_BAK=$(cat "$OLLAMA_ENV")
+cat > "$OLLAMA_ENV" <<'OLLAMAEOF'
+export OLLAMA_URL="http://localhost:11434"
+export OLLAMA_MODEL="test-model"
+export OLLAMA_OPUS_MODEL="test-opus"
+export OLLAMA_SONNET_MODEL="test-sonnet"
+export OLLAMA_HAIKU_MODEL="test-haiku"
+OLLAMAEOF
+
+"$CC" ollama >/dev/null
+check "active-backend = ollama"          "ollama"                        "$(active)"
+check "env.sh: ANTHROPIC_BASE_URL"       "ANTHROPIC_BASE_URL=http://localhost:11434" "$(envgrep ANTHROPIC_BASE_URL)"
+check "env.sh: ANTHROPIC_AUTH_TOKEN"     "ANTHROPIC_AUTH_TOKEN=ollama"   "$(envgrep ANTHROPIC_AUTH_TOKEN)"
+check "env.sh: ANTHROPIC_MODEL"          "ANTHROPIC_MODEL=test-model"    "$(envgrep 'ANTHROPIC_MODEL=')"
+check "env.sh: OPUS tier"               "ANTHROPIC_DEFAULT_OPUS_MODEL=test-opus"   "$(envgrep ANTHROPIC_DEFAULT_OPUS_MODEL)"
+check "env.sh: SONNET tier"             "ANTHROPIC_DEFAULT_SONNET_MODEL=test-sonnet" "$(envgrep ANTHROPIC_DEFAULT_SONNET_MODEL)"
+check "env.sh: HAIKU tier"              "ANTHROPIC_DEFAULT_HAIKU_MODEL=test-haiku"  "$(envgrep ANTHROPIC_DEFAULT_HAIKU_MODEL)"
+check "env.sh: unset ANTHROPIC_API_KEY"  "unset ANTHROPIC_API_KEY"       "$(envgrep 'unset ANTHROPIC_API_KEY')"
+check "settings.json: ollama model"      "test-model"                    "$(model)"
+check_empty "env.sh: no BEDROCK export"  "$(envgrep 'CLAUDE_CODE_USE_BEDROCK=1')"
+
+# -- cc ollama MODEL (inline override) ----------------------------------------
+echo ""
+echo "[ cc ollama MODEL ]"
+"$CC" ollama custom-model:7b >/dev/null
+check "active-backend = ollama"          "ollama"                        "$(active)"
+check "settings.json: overridden model"  "custom-model:7b"               "$(model)"
+check "env.sh: overridden ANTHROPIC_MODEL" "ANTHROPIC_MODEL=custom-model:7b" "$(envgrep 'ANTHROPIC_MODEL=')"
+
+# Restore ollama.env
+if [[ -n "$OLLAMA_BAK" ]]; then
+  echo "$OLLAMA_BAK" > "$OLLAMA_ENV"
+else
+  rm -f "$OLLAMA_ENV"
+fi
+
 # -- model tiers on direct ----------------------------------------------------
 echo ""
 echo "[ model tiers on direct ]"
+"$CC" direct >/dev/null
 "$CC" opus >/dev/null
 check "opus"                            "opus"                           "$(model)"
 check "active-backend unchanged"        "direct"                         "$(active)"
@@ -148,6 +191,7 @@ check "shows PROVIDERS"         "PROVIDERS"         "$HELP_OUT"
 check "shows MODEL TIER"        "MODEL TIER"        "$HELP_OUT"
 check "shows RATE LIMIT"        "RATE LIMIT"        "$HELP_OUT"
 check "shows teams"             "cc teams"          "$HELP_OUT"
+check "shows ollama"            "cc ollama"         "$HELP_OUT"
 check "shows cc check"          "cc check"          "$HELP_OUT"
 
 # -- cc check -----------------------------------------------------------------
@@ -159,6 +203,7 @@ EXIT=$?
 check "shows teams"    "teams"    "$CHECK_OUT"
 check "shows bedrock"  "bedrock"  "$CHECK_OUT"
 check "shows vertex"   "vertex"   "$CHECK_OUT"
+check "shows ollama"   "ollama"   "$CHECK_OUT"
 
 # -- cc scan (offline checks) ------------------------------------------------
 echo ""
@@ -179,14 +224,16 @@ echo ""
 echo "[ restore ]"
 if [[ -n "$ORIGINAL_ACTIVE" ]]; then
   "$CC" "$ORIGINAL_ACTIVE" >/dev/null
-  # restore original model tier
-  case "$ORIGINAL_MODEL" in
-    *opus-4-5*)   "$CC" opus45   >/dev/null ;;
-    *sonnet-4-5*) "$CC" sonnet45 >/dev/null ;;
-    *sonnet*)     "$CC" sonnet   >/dev/null ;;
-    *haiku*)      "$CC" haiku    >/dev/null ;;
-    *)            "$CC" opus     >/dev/null ;;
-  esac
+  # restore original model tier (skip for ollama — model is user-configured)
+  if [[ "$ORIGINAL_ACTIVE" != "ollama" ]]; then
+    case "$ORIGINAL_MODEL" in
+      *opus-4-5*)   "$CC" opus45   >/dev/null ;;
+      *sonnet-4-5*) "$CC" sonnet45 >/dev/null ;;
+      *sonnet*)     "$CC" sonnet   >/dev/null ;;
+      *haiku*)      "$CC" haiku    >/dev/null ;;
+      *)            "$CC" opus     >/dev/null ;;
+    esac
+  fi
   ok "restored to ${ORIGINAL_ACTIVE} / ${ORIGINAL_MODEL}"
 else
   ok "nothing to restore"
