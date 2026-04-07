@@ -687,13 +687,13 @@ EOF
 
   scan)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    exec python3 "${SCRIPT_DIR}/cc-scan" "$@"
+    exec /usr/bin/python3 "${SCRIPT_DIR}/cc-scan" "$@"
     ;;
 
   usage)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     shift
-    exec python3 "${SCRIPT_DIR}/cc-usage" "$@"
+    exec /usr/bin/python3 "${SCRIPT_DIR}/cc-usage" "$@"
     ;;
 
   account)
