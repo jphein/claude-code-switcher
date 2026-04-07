@@ -6,12 +6,14 @@ Discovers accounts from:
   2. ~/.ccs/instances/*/                  (ccs profiles)
   3. ~/.claude/                           (default, always included)
 
-For each account, reads .credentials.json metadata and optionally
-probes the API to check rate limit status.
+Probes three API endpoints per account:
+  - GET /api/oauth/usage              → rate limit windows (5h, 7d, per-model)
+  - GET /api/oauth/profile            → org name, billing, subscription status
+  - GET /api/oauth/organizations/{id}/overage_credit_grant → credit balance
 
 Usage:
   cc-usage              # Quick check (metadata only, no API calls)
-  cc-usage --probe      # Probe each account with a 1-token API call
+  cc-usage --probe      # Full API probe (usage + profile + credits)
   cc-usage --json       # JSON output for scripting
 """
 
@@ -20,11 +22,15 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path.home()
 CONFIG_DIR = HOME / ".config" / "claude-code"
 ACCOUNTS_DIR = CONFIG_DIR / "accounts"
+
+API_BASE = "https://api.anthropic.com"
+AUTH_HEADERS = {"anthropic-beta": "oauth-2025-04-20", "Content-Type": "application/json"}
 
 try:
     import httpx
@@ -60,10 +66,10 @@ def find_accounts():
     return accounts
 
 
-# ── Account checking ─────────────────────────────────────────────────────────
+# ── Credential reading ───────────────────────────────────────────────────────
 
 def read_creds(config_dir):
-    """Read metadata from .credentials.json without exposing secrets."""
+    """Read metadata from .credentials.json."""
     creds_file = config_dir / ".credentials.json"
     try:
         data = json.loads(creds_file.read_text())
@@ -84,130 +90,49 @@ def read_creds(config_dir):
     }
 
 
-def probe_account(config_dir):
-    """Probe an account for usage data. Tries multiple approaches."""
-    if not HAS_HTTPX:
-        return {"probe": "skip", "probe_detail": "httpx not installed"}
-
-    creds_file = config_dir / ".credentials.json"
+def _get_token(config_dir):
+    """Extract OAuth token and subscription type."""
     try:
-        data = json.loads(creds_file.read_text())
+        data = json.loads((config_dir / ".credentials.json").read_text())
         oauth = data.get("claudeAiOauth", {})
-        token = oauth.get("accessToken", "")
-        sub_type = oauth.get("subscriptionType", "")
+        return oauth.get("accessToken", ""), oauth.get("subscriptionType", "")
     except Exception:
-        return {"probe": "error", "probe_detail": "can't read token"}
+        return "", ""
 
-    if not token:
-        return {"probe": "no_token"}
 
-    headers = {"Authorization": f"Bearer {token}"}
+def _auth_headers(token):
+    return {**AUTH_HEADERS, "Authorization": f"Bearer {token}"}
 
-    # For Teams/subscription accounts, try the usage endpoint
-    if sub_type in ("team", "max", "pro", "enterprise"):
-        result = _probe_usage_endpoint(token)
-        if result.get("probe") in ("ok", "rate_limited"):
-            return result
 
-    # For API key accounts or fallback: try a minimal messages call
+# ── API probes ───────────────────────────────────────────────────────────────
+
+def _probe_usage(token):
+    """GET /api/oauth/usage → rate limit windows + overage."""
     try:
-        resp = httpx.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                **headers,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "x"}],
-            },
-            timeout=15,
-        )
+        resp = httpx.get(f"{API_BASE}/api/oauth/usage",
+                         headers=_auth_headers(token), timeout=10)
 
-        result = {"probe_http": resp.status_code}
-
-        # Extract rate limit headers (API key accounts only)
-        for key in (
-            "anthropic-ratelimit-requests-limit",
-            "anthropic-ratelimit-requests-remaining",
-            "anthropic-ratelimit-requests-reset",
-            "anthropic-ratelimit-tokens-limit",
-            "anthropic-ratelimit-tokens-remaining",
-            "anthropic-ratelimit-tokens-reset",
-            "retry-after",
-        ):
-            val = resp.headers.get(key)
-            if val:
-                result[key] = val
-
-        if resp.status_code == 200:
-            result["probe"] = "ok"
-        elif resp.status_code == 429:
-            result["probe"] = "rate_limited"
-            retry = resp.headers.get("retry-after", "?")
-            result["probe_detail"] = f"retry after {retry}s"
-        elif resp.status_code in (401, 403):
-            # Expected for Teams tokens — they can't make raw API calls
-            result["probe"] = "token_ok" if sub_type else "auth_failed"
-            if sub_type:
-                result["probe_detail"] = "Teams token (no raw API access)"
-        else:
-            result["probe"] = f"http_{resp.status_code}"
-
-        return result
-
-    except httpx.ConnectError:
-        return {"probe": "error", "probe_detail": "connection failed"}
-    except Exception as e:
-        return {"probe": "error", "probe_detail": str(e)[:60]}
-
-
-def _probe_usage_endpoint(token):
-    """Fetch usage data from Claude's OAuth usage API."""
-    try:
-        resp = httpx.get(
-            "https://api.anthropic.com/api/oauth/usage",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "anthropic-beta": "oauth-2025-04-20",
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-
-        # Extract rate limit headers from ANY response (including 429)
-        rl_headers = {}
-        for key in resp.headers:
-            lk = key.lower()
-            if "ratelimit" in lk or "retry" in lk:
-                rl_headers[key] = resp.headers[key]
+        # Extract retry-after from ANY response
+        retry = resp.headers.get("retry-after")
 
         if resp.status_code == 429:
-            result = {"probe": "rate_limited", "probe_detail": "429 from usage API"}
-            result.update(rl_headers)
-            retry = resp.headers.get("retry-after")
+            result = {"probe": "rate_limited"}
             if retry:
                 result["retry_after"] = retry
             return result
 
-        if resp.status_code in (401, 403):
-            return {"probe": "token_ok", "probe_detail": "usage API auth failed"}
-
         if resp.status_code != 200:
-            return {"probe_usage": f"http_{resp.status_code}"}
+            return {}
 
         data = resp.json()
         if not data:
-            return {"probe_usage": "empty"}
+            return {}
 
-        result = {"probe": "ok", "usage_raw": data}
+        result = {"probe": "ok"}
 
-        # Extract rate limit windows
-        # Each window: {utilization: 0-100, resets_at: "ISO8601"}
+        # All rate limit windows
         for key in ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet",
-                     "seven_day_oauth_apps"):
+                     "seven_day_oauth_apps", "seven_day_cowork"):
             window = data.get(key)
             if window and isinstance(window, dict):
                 util = window.get("utilization")
@@ -217,7 +142,7 @@ def _probe_usage_endpoint(token):
                 if resets:
                     result[f"{key}_resets"] = resets
 
-        # Extra usage (overage credits for Teams)
+        # Extra usage / overage
         extra = data.get("extra_usage")
         if extra and isinstance(extra, dict):
             result["extra_enabled"] = extra.get("is_enabled", False)
@@ -227,12 +152,69 @@ def _probe_usage_endpoint(token):
 
         return result
 
-    except Exception as e:
-        return {"probe_usage": f"error: {str(e)[:40]}"}
+    except Exception:
+        return {}
+
+
+def _probe_profile(token):
+    """GET /api/oauth/profile → account + org info."""
+    try:
+        resp = httpx.get(f"{API_BASE}/api/oauth/profile",
+                         headers=_auth_headers(token), timeout=10)
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+        result = {}
+
+        acct = data.get("account", {})
+        if acct:
+            result["account_name"] = acct.get("display_name") or acct.get("full_name", "")
+            result["account_email"] = acct.get("email", "")
+            result["account_uuid"] = acct.get("uuid", "")
+
+        org = data.get("organization", {})
+        if org:
+            result["org_name"] = org.get("name", "")
+            result["org_uuid"] = org.get("uuid", "")
+            result["org_type"] = org.get("organization_type", "")
+            result["org_billing"] = org.get("billing_type", "")
+            result["org_status"] = org.get("subscription_status", "")
+            result["org_extra_usage"] = org.get("has_extra_usage_enabled", False)
+            result["org_created"] = org.get("subscription_created_at", "")
+
+        return result
+
+    except Exception:
+        return {}
+
+
+def _probe_overage_grant(token, org_uuid):
+    """GET /api/oauth/organizations/{id}/overage_credit_grant → credit balance."""
+    if not org_uuid:
+        return {}
+    try:
+        resp = httpx.get(
+            f"{API_BASE}/api/oauth/organizations/{org_uuid}/overage_credit_grant",
+            headers=_auth_headers(token), timeout=10)
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+        return {
+            "grant_available": data.get("available", False),
+            "grant_eligible": data.get("eligible", False),
+            "grant_granted": data.get("granted", False),
+            "grant_amount_cents": data.get("amount_minor_units"),
+            "grant_currency": data.get("currency", "USD"),
+        }
+
+    except Exception:
+        return {}
 
 
 def check_sessions(config_dir):
-    """Check for active sessions."""
+    """Check for active Claude Code sessions."""
     sessions_dir = config_dir / "sessions"
     if not sessions_dir.is_dir():
         return {"sessions": 0}
@@ -243,7 +225,6 @@ def check_sessions(config_dir):
         try:
             s = json.loads(f.read_text())
             pid = s.get("pid")
-            # Check if process is still running
             if pid:
                 try:
                     os.kill(pid, 0)
@@ -270,49 +251,26 @@ def check_account(name, config_dir, do_probe=False):
     info.update(check_sessions(config_dir))
 
     if do_probe and info.get("token_valid"):
-        info.update(probe_account(config_dir))
+        token, sub_type = _get_token(config_dir)
+        if token and sub_type in ("team", "max", "pro", "enterprise"):
+            # Parallel API calls for this account
+            usage = _probe_usage(token)
+            profile = _probe_profile(token)
+            info.update(usage)
+            info.update(profile)
+
+            # Overage grant needs org_uuid from profile
+            org_uuid = info.get("org_uuid")
+            if org_uuid and info.get("extra_enabled"):
+                info.update(_probe_overage_grant(token, org_uuid))
 
     return info
 
 
-# ── Output ───────────────────────────────────────────────────────────────────
-
-def format_tier(tier):
-    """Shorten rate_tier for display."""
-    if not tier or tier == "?":
-        return "?"
-    return tier.replace("default_claude_", "").replace("default_", "")
-
-
-def format_status(info):
-    """One-word status from account info."""
-    if info.get("error"):
-        return "✗ Error"
-    if not info.get("has_token"):
-        return "✗ No token"
-    if not info.get("token_valid"):
-        return "✗ Expired"
-    probe = info.get("probe")
-    if probe == "ok":
-        return "✓ Ready"
-    if probe == "rate_limited":
-        return "~ Limited"
-    if probe == "token_ok":
-        return "✓ Token OK"
-    if probe == "auth_failed":
-        return "✗ Auth"
-    if probe and probe.startswith("http_"):
-        return f"? {probe}"
-    if probe:
-        return f"? {probe}"
-    # No probe — infer from metadata
-    if info.get("token_valid"):
-        return "✓ Valid"
-    return "? Unprobed"
-
+# ── Formatting ───────────────────────────────────────────────────────────────
 
 def _format_util(pct):
-    """Format utilization percentage with visual indicator."""
+    """Format utilization percentage with visual bar."""
     if pct is None:
         return "—"
     pct = float(pct)
@@ -328,16 +286,17 @@ def _format_util(pct):
 
 
 def _parse_reset(iso_str):
-    """Parse ISO reset time to hours/minutes from now."""
+    """Parse ISO reset time to human-friendly duration from now."""
     if not iso_str:
         return None
     try:
-        from datetime import datetime, timezone
         reset_time = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         delta = (reset_time - now).total_seconds()
         if delta <= 0:
             return "now"
+        if delta > 86400:
+            return f"{delta / 86400:.1f}d"
         if delta > 3600:
             return f"{delta / 3600:.1f}h"
         return f"{delta / 60:.0f}m"
@@ -345,45 +304,79 @@ def _parse_reset(iso_str):
         return None
 
 
-def format_5h(info):
-    """Format 5-hour utilization."""
+def fmt_status(info):
+    if info.get("error"):
+        return "✗ Error"
+    if not info.get("has_token"):
+        return "✗ No token"
+    if not info.get("token_valid"):
+        return "✗ Expired"
+    probe = info.get("probe")
+    if probe == "ok":
+        return "✓ Ready"
+    if probe == "rate_limited":
+        return "~ Limited"
+    if probe == "token_ok":
+        return "✓ Token OK"
+    if info.get("token_valid"):
+        return "✓ Valid"
+    return "?"
+
+
+def fmt_org(info):
+    return info.get("org_name", "—")
+
+
+def fmt_5h(info):
     return _format_util(info.get("five_hour_util"))
 
 
-def format_7d(info):
-    """Format 7-day utilization."""
+def fmt_7d(info):
     return _format_util(info.get("seven_day_util"))
 
 
-def format_opus(info):
-    """Format 7-day Opus utilization."""
-    return _format_util(info.get("seven_day_opus_util"))
+def fmt_sonnet(info):
+    return _format_util(info.get("seven_day_sonnet_util"))
 
 
-def format_extra(info):
-    """Format extra usage credits."""
+def fmt_overage(info):
+    """Format overage: spent / grant, or just spent."""
     if not info.get("extra_enabled"):
         return "—"
     used = info.get("extra_used")
-    limit = info.get("extra_monthly_limit")
     if used is None:
         return "—"
-    used_f = float(used)
-    if limit and float(limit) > 0:
-        return f"${used_f:.0f}/${float(limit):.0f}"
+    used_f = float(used) / 100  # API returns cents
+
+    grant = info.get("grant_amount_cents")
+    if grant and int(grant) > 0:
+        grant_f = int(grant) / 100
+        remaining = grant_f - used_f
+        return f"${used_f:.0f}/${grant_f:.0f}"
     if used_f > 0:
-        return f"${used_f:.0f}"
+        return f"${used_f:.2f}"
     return "$0"
 
 
-def format_reset(info):
-    """Format nearest reset time."""
-    # Check 5h reset first (most relevant for immediate scheduling)
-    for key in ("five_hour_resets", "seven_day_resets", "seven_day_opus_resets"):
+def fmt_remaining(info):
+    """Format remaining overage credits."""
+    grant = info.get("grant_amount_cents")
+    used = info.get("extra_used")
+    if grant and used is not None:
+        remaining = (int(grant) - float(used)) / 100
+        if remaining <= 0:
+            return "✗ $0"
+        return f"${remaining:.0f}"
+    return "—"
+
+
+def fmt_reset(info):
+    """Format nearest rate limit reset."""
+    for key in ("five_hour_resets", "seven_day_resets", "seven_day_opus_resets",
+                "seven_day_sonnet_resets"):
         val = _parse_reset(info.get(key))
         if val:
-            label = "5h" if "five" in key else "7d"
-            return f"{val}"
+            return val
     for retry_key in ("retry_after", "retry-after"):
         retry = info.get(retry_key)
         if retry:
@@ -397,57 +390,102 @@ def format_reset(info):
     return "—"
 
 
-def render_table(results, do_probe):
-    """Print results as a table."""
-    # Check if any result has usage data (to show extended columns)
-    has_usage = do_probe and any(r.get("five_hour_util") is not None for r in results)
+# ── Table rendering ──────────────────────────────────────────────────────────
 
-    has_extra = any(r.get("extra_used") and float(r.get("extra_used", 0)) > 0 for r in results)
+def render_table(results, do_probe):
+    """Print results as a formatted table."""
+    has_usage = do_probe and any(r.get("five_hour_util") is not None for r in results)
+    has_org = any(r.get("org_name") for r in results)
+    has_sonnet = any(r.get("seven_day_sonnet_util") is not None for r in results)
+    has_grant = any(r.get("grant_amount_cents") for r in results)
 
     if has_usage:
         cols = [
-            ("Account", 14, lambda r: r["name"]),
-            ("Status", 12, lambda r: format_status(r)),
-            ("5h Use", 8, lambda r: format_5h(r)),
-            ("7d Use", 8, lambda r: format_7d(r)),
-            ("Opus 7d", 8, lambda r: format_opus(r)),
-            ("Extra $", 8, lambda r: format_extra(r)),
-            ("Reset", 7, lambda r: format_reset(r)),
-            ("Token", 7, lambda r: f"{r.get('token_expires_h', '?')}h"),
-            ("Sess", 4, lambda r: str(r.get("sessions", 0))),
+            ("Account", 12, lambda r: r["name"]),
+            ("Status", 11, lambda r: fmt_status(r)),
+        ]
+        if has_org:
+            cols.append(("Org", 14, lambda r: fmt_org(r)))
+        cols += [
+            ("5h", 7, lambda r: fmt_5h(r)),
+            ("7d", 7, lambda r: fmt_7d(r)),
+        ]
+        if has_sonnet:
+            cols.append(("Son 7d", 7, lambda r: fmt_sonnet(r)))
+        cols.append(("Overage", 9, lambda r: fmt_overage(r)))
+        if has_grant:
+            cols.append(("Left", 6, lambda r: fmt_remaining(r)))
+        cols += [
+            ("Reset", 6, lambda r: fmt_reset(r)),
+            ("Ses", 3, lambda r: str(r.get("sessions", 0))),
         ]
     elif do_probe:
         cols = [
             ("Account", 14, lambda r: r["name"]),
-            ("Status", 12, lambda r: format_status(r)),
-            ("Tier", 10, lambda r: format_tier(r.get("rate_tier", "?"))),
-            ("Token", 8, lambda r: f"{r.get('token_expires_h', '?')}h"),
+            ("Status", 12, lambda r: fmt_status(r)),
             ("Sessions", 8, lambda r: str(r.get("sessions", 0))),
-            ("Reset", 8, lambda r: format_reset(r)),
+            ("Reset", 8, lambda r: fmt_reset(r)),
         ]
     else:
         cols = [
             ("Account", 14, lambda r: r["name"]),
-            ("Status", 12, lambda r: format_status(r)),
-            ("Tier", 10, lambda r: format_tier(r.get("rate_tier", "?"))),
-            ("Token", 8, lambda r: f"{r.get('token_expires_h', '?')}h"),
+            ("Status", 12, lambda r: fmt_status(r)),
+            ("Tier", 10, lambda r: r.get("rate_tier", "?").replace("default_claude_", "").replace("default_", "")),
             ("Sessions", 8, lambda r: str(r.get("sessions", 0))),
         ]
 
-    # Header
+    # Draw table
     print()
-    border_top = "  ┌" + "┬".join(f"─{'─' * w}─" for _, w, _ in cols) + "┐"
-    header = "  │" + "│".join(f" {name:<{w}} " for name, w, _ in cols) + "│"
-    border_mid = "  ├" + "┼".join(f"─{'─' * w}─" for _, w, _ in cols) + "┤"
-    border_bot = "  └" + "┴".join(f"─{'─' * w}─" for _, w, _ in cols) + "┘"
-
-    print(border_top)
-    print(header)
-    print(border_mid)
+    hr = lambda ch: "  " + ch[0] + ch[1].join(f"─{'─' * w}─" for _, w, _ in cols) + ch[2]
+    print(hr("┌┬┐"))
+    print("  │" + "│".join(f" {name:<{w}} " for name, w, _ in cols) + "│")
+    print(hr("├┼┤"))
     for r in results:
-        row = "  │" + "│".join(f" {fn(r):<{w}} " for _, w, fn in cols) + "│"
-        print(row)
-    print(border_bot)
+        print("  │" + "│".join(f" {fn(r):<{w}} " for _, w, fn in cols) + "│")
+    print(hr("└┴┘"))
+    print()
+
+
+def render_summary(results):
+    """Print summary below the table."""
+    # Best account recommendation (lowest 7d utilization — more strategic than 5h)
+    with_7d = [r for r in results if r.get("seven_day_util") is not None and r.get("token_valid")]
+    if with_7d:
+        best = min(with_7d, key=lambda r: r.get("seven_day_util", 100))
+        worst = max(with_7d, key=lambda r: r.get("seven_day_util", 0))
+
+        if worst.get("seven_day_util", 0) >= 50 and best["name"] != worst["name"]:
+            print(f"  Best: cc account {best['name']}  (7d: {best.get('seven_day_util', 0):.0f}%)")
+
+    # Total overage across all orgs
+    orgs_seen = set()
+    total_used = 0
+    total_grant = 0
+    for r in results:
+        org = r.get("org_uuid", r["name"])
+        if org in orgs_seen:
+            continue
+        orgs_seen.add(org)
+        used = r.get("extra_used")
+        if used is not None:
+            total_used += float(used) / 100
+        grant = r.get("grant_amount_cents")
+        if grant:
+            total_grant += int(grant) / 100
+
+    if total_used > 0 or total_grant > 0:
+        remaining = total_grant - total_used
+        parts = [f"Overage: ${total_used:.2f} used"]
+        if total_grant > 0:
+            parts.append(f"${remaining:.2f} remaining of ${total_grant:.0f} grant")
+        print(f"  {' / '.join(parts)}")
+
+    # Rate-limited accounts
+    limited = [r for r in results if r.get("probe") == "rate_limited"]
+    if limited:
+        names = ", ".join(r["name"] for r in limited)
+        print(f"  Rate-limited: {names}")
+
     print()
 
 
@@ -481,26 +519,21 @@ def main():
     results.sort(key=lambda r: ("" if r["name"] == "default" else r["name"]))
 
     if do_json:
-        print(json.dumps(results, indent=2))
+        # Include everything for scripting
+        # Strip raw token data for safety
+        safe = []
+        for r in results:
+            s = {k: v for k, v in r.items() if k != "usage_raw"}
+            safe.append(s)
+        print(json.dumps(safe, indent=2))
     else:
         render_table(results, do_probe)
 
-        if not do_probe:
-            print("  Tip: cc usage --probe  (makes 1-token API call per account for rate limit info)")
-            print()
-
-        # Suggest best account (lowest 5h utilization)
         if do_probe:
-            with_usage = [
-                r for r in results
-                if r.get("five_hour_util") is not None and r.get("token_valid")
-            ]
-            if with_usage:
-                best = min(with_usage, key=lambda r: r.get("five_hour_util", 100))
-                worst = max(with_usage, key=lambda r: r.get("five_hour_util", 0))
-                if worst.get("five_hour_util", 0) >= 80 and best["name"] != worst["name"]:
-                    print(f"  → {worst['name']} at {worst['five_hour_util']:.0f}% — switch: cc account {best['name']} ({best.get('five_hour_util', 0):.0f}%)")
-                    print()
+            render_summary(results)
+        else:
+            print("  Tip: cc usage --probe  (full API check: usage, org, credits)")
+            print()
 
 
 if __name__ == "__main__":
