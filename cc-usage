@@ -360,6 +360,22 @@ def format_opus(info):
     return _format_util(info.get("seven_day_opus_util"))
 
 
+def format_extra(info):
+    """Format extra usage credits."""
+    if not info.get("extra_enabled"):
+        return "—"
+    used = info.get("extra_used")
+    limit = info.get("extra_monthly_limit")
+    if used is None:
+        return "—"
+    used_f = float(used)
+    if limit and float(limit) > 0:
+        return f"${used_f:.0f}/${float(limit):.0f}"
+    if used_f > 0:
+        return f"${used_f:.0f}"
+    return "$0"
+
+
 def format_reset(info):
     """Format nearest reset time."""
     # Check 5h reset first (most relevant for immediate scheduling)
@@ -386,6 +402,8 @@ def render_table(results, do_probe):
     # Check if any result has usage data (to show extended columns)
     has_usage = do_probe and any(r.get("five_hour_util") is not None for r in results)
 
+    has_extra = any(r.get("extra_used") and float(r.get("extra_used", 0)) > 0 for r in results)
+
     if has_usage:
         cols = [
             ("Account", 14, lambda r: r["name"]),
@@ -393,6 +411,7 @@ def render_table(results, do_probe):
             ("5h Use", 8, lambda r: format_5h(r)),
             ("7d Use", 8, lambda r: format_7d(r)),
             ("Opus 7d", 8, lambda r: format_opus(r)),
+            ("Extra $", 8, lambda r: format_extra(r)),
             ("Reset", 7, lambda r: format_reset(r)),
             ("Token", 7, lambda r: f"{r.get('token_expires_h', '?')}h"),
             ("Sess", 4, lambda r: str(r.get("sessions", 0))),
