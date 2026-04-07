@@ -373,23 +373,64 @@ def fmt_remaining(info):
     return "—"
 
 
-def fmt_reset(info):
-    """Format nearest rate limit reset."""
-    for key in ("five_hour_resets", "seven_day_resets", "seven_day_opus_resets",
-                "seven_day_sonnet_resets"):
-        val = _parse_reset(info.get(key))
-        if val:
-            return val
-    for retry_key in ("retry_after", "retry-after"):
-        retry = info.get(retry_key)
+def _format_reset_relative(iso_str):
+    """Format reset as relative time (e.g. '2.3h', '45m')."""
+    val = _parse_reset(iso_str)
+    return val if val else "—"
+
+
+def _format_reset_date(iso_str):
+    """Format reset as local date/time (e.g. 'Apr 07 5:00p', 'Apr 11 7:00a')."""
+    if not iso_str:
+        return "—"
+    try:
+        reset_utc = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        reset_local = reset_utc.astimezone()
+        now = datetime.now().astimezone()
+        # Same day: just time
+        if reset_local.date() == now.date():
+            return reset_local.strftime("%-I:%M%p").lower()
+        # Within 7 days: "Mon 5:00pm"
+        if (reset_local.date() - now.date()).days < 7:
+            return reset_local.strftime("%a %-I%p").lower()
+        # Farther: "Apr 14 7a"
+        return reset_local.strftime("%b %d %-I%p").lower()
+    except Exception:
+        return "—"
+
+
+def _retry_after_str(info):
+    """Format retry-after header."""
+    for key in ("retry_after", "retry-after"):
+        retry = info.get(key)
         if retry:
             try:
                 s = int(retry)
                 if s >= 3600:
                     return f"{s / 3600:.1f}h"
-                return f"{s // 60}m{s % 60}s" if s >= 60 else f"{s}s"
+                return f"{s // 60}m" if s >= 60 else f"{s}s"
             except ValueError:
                 pass
+    return None
+
+
+def fmt_5h_reset(info):
+    """5h reset: relative time + clock time."""
+    iso = info.get("five_hour_resets")
+    if iso:
+        rel = _format_reset_relative(iso)
+        date = _format_reset_date(iso)
+        return f"{rel} ({date})"
+    # Fallback to retry-after for rate-limited accounts
+    ra = _retry_after_str(info)
+    return ra if ra else "—"
+
+
+def fmt_7d_reset(info):
+    """7d reset: date (this is the one you schedule around)."""
+    iso = info.get("seven_day_resets")
+    if iso:
+        return _format_reset_date(iso)
     return "—"
 
 
@@ -435,7 +476,8 @@ def render_table(results, do_probe):
         if has_grant:
             cols.append(("Left", 6, lambda r: fmt_remaining(r)))
         cols += [
-            ("Reset", 6, lambda r: fmt_reset(r)),
+            ("5h Reset", 16, lambda r: fmt_5h_reset(r)),
+            ("7d Reset", 12, lambda r: fmt_7d_reset(r)),
             ("Ses", 3, lambda r: str(r.get("sessions", 0))),
         ]
     elif do_probe:
@@ -443,7 +485,8 @@ def render_table(results, do_probe):
             ("Account", 14, lambda r: r["name"]),
             ("Status", 12, lambda r: fmt_status(r)),
             ("Sessions", 8, lambda r: str(r.get("sessions", 0))),
-            ("Reset", 8, lambda r: fmt_reset(r)),
+            ("5h Reset", 16, lambda r: fmt_5h_reset(r)),
+            ("7d Reset", 12, lambda r: fmt_7d_reset(r)),
         ]
     else:
         cols = [
