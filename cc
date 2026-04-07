@@ -97,7 +97,8 @@ _write_env() {
   local provider="$1"
   {
     echo "# Claude Code active backend: ${provider} ($(date '+%Y-%m-%d %H:%M'))"
-    echo "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN"
+    echo "unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN"
+    echo "unset ANTHROPIC_FOUNDRY_RESOURCE ANTHROPIC_FOUNDRY_BASE_URL ANTHROPIC_FOUNDRY_API_KEY"
     echo "unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL"
     echo "export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1  # Let shell set title (for hostname-in-title)"
     case "$provider" in
@@ -113,16 +114,23 @@ _write_env() {
         echo "export ANTHROPIC_VERTEX_PROJECT_ID=${proj}"
         ;;
       foundry)
-        # Source saved credentials if available
+        # Azure AI Foundry — use official CLAUDE_CODE_USE_FOUNDRY mode
         local foundry_env="${CONFIG_DIR}/foundry.env"
         if [[ -f "$foundry_env" ]]; then
           # shellcheck disable=SC1090
           source "$foundry_env"
         fi
-        local endpoint="${AZURE_FOUNDRY_ENDPOINT:-https://YOUR_RESOURCE.services.ai.azure.com/models}"
-        echo "export ANTHROPIC_BASE_URL=${endpoint}"
-        if [[ -n "${AZURE_ANTHROPIC_API_KEY:-}" ]]; then
-          echo "export ANTHROPIC_API_KEY=${AZURE_ANTHROPIC_API_KEY}"
+        echo "export CLAUDE_CODE_USE_FOUNDRY=1"
+        if [[ -n "${ANTHROPIC_FOUNDRY_RESOURCE:-}" ]]; then
+          echo "export ANTHROPIC_FOUNDRY_RESOURCE=${ANTHROPIC_FOUNDRY_RESOURCE}"
+        elif [[ -n "${AZURE_FOUNDRY_ENDPOINT:-}" ]]; then
+          echo "export ANTHROPIC_FOUNDRY_BASE_URL=${AZURE_FOUNDRY_ENDPOINT}"
+        fi
+        if [[ -n "${ANTHROPIC_FOUNDRY_API_KEY:-}" ]]; then
+          echo "export ANTHROPIC_FOUNDRY_API_KEY=${ANTHROPIC_FOUNDRY_API_KEY}"
+        elif [[ -n "${AZURE_ANTHROPIC_API_KEY:-}" ]]; then
+          # Legacy: migrate old env var name
+          echo "export ANTHROPIC_FOUNDRY_API_KEY=${AZURE_ANTHROPIC_API_KEY}"
         fi
         ;;
       direct)
@@ -343,17 +351,30 @@ _setup_foundry() {
   echo "  Azure AI Foundry Setup"
   echo "  ──────────────────────"
 
-  read -p "  Azure endpoint URL (e.g. https://YOUR_RESOURCE.services.ai.azure.com/models): " azure_endpoint
-  read -s -p "  Azure API Key: " azure_key
+  echo ""
+  echo "  Option A: Resource name (e.g. 'my-resource')"
+  echo "  Option B: Full URL (e.g. https://my-resource.services.ai.azure.com/...)"
+  echo ""
+  read -p "  Azure resource name or URL: " azure_input
+
+  # Detect if it's a URL or a resource name
+  local resource="" base_url=""
+  if [[ "$azure_input" == https://* ]]; then
+    base_url="$azure_input"
+  else
+    resource="$azure_input"
+  fi
+
+  read -s -p "  Azure API Key (or Enter for Azure AD auth): " azure_key
   echo
 
-  # Save to env file that gets sourced
   local foundry_env="${CONFIG_DIR}/foundry.env"
-  cat > "$foundry_env" <<EOF
-# Azure AI Foundry credentials (sourced by cc foundry)
-export AZURE_FOUNDRY_ENDPOINT="${azure_endpoint}"
-export AZURE_ANTHROPIC_API_KEY="${azure_key}"
-EOF
+  {
+    echo "# Azure AI Foundry credentials (sourced by cc foundry)"
+    [[ -n "$resource" ]] && echo "export ANTHROPIC_FOUNDRY_RESOURCE=\"${resource}\""
+    [[ -n "$base_url" ]] && echo "export ANTHROPIC_FOUNDRY_BASE_URL=\"${base_url}\""
+    [[ -n "$azure_key" ]] && echo "export ANTHROPIC_FOUNDRY_API_KEY=\"${azure_key}\""
+  } > "$foundry_env"
   chmod 600 "$foundry_env"
 
   echo ""
