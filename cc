@@ -620,12 +620,13 @@ EOF
 
   setup)
     echo ""
-    echo "  cc setup-teams     Info on Claude Teams OAuth login"
-    echo "  cc setup-direct    Configure Anthropic API key"
-    echo "  cc setup-bedrock   Configure AWS credentials for Bedrock"
-    echo "  cc setup-vertex    Authenticate with Google Cloud"
-    echo "  cc setup-foundry   Configure Azure AI Foundry endpoint"
-    echo "  cc setup-ollama    Configure local Ollama instance"
+    echo "  cc setup-teams      Info on Claude Teams OAuth login"
+    echo "  cc setup-direct     Configure Anthropic API key"
+    echo "  cc setup-bedrock    Configure AWS credentials for Bedrock"
+    echo "  cc setup-vertex     Authenticate with Google Cloud"
+    echo "  cc setup-foundry    Configure Azure AI Foundry endpoint"
+    echo "  cc setup-ollama     Configure local Ollama instance"
+    echo "  cc setup-accounts   Set up multiple Teams accounts"
     echo ""
     ;;
 
@@ -661,6 +662,13 @@ EOF
     echo "    cc sonnet45   Sonnet 4.5 — extended thinking"
     echo "    cc haiku      Haiku 4.5  — fastest, cheapest"
     echo ""
+    echo "  ACCOUNTS  (multi-account Teams rotation)"
+    echo "    cc setup-accounts   Set up multiple Teams accounts"
+    echo "    cc usage             Check all accounts (metadata)"
+    echo "    cc usage --probe     Check all accounts (with API probe)"
+    echo "    cc account           List available accounts"
+    echo "    cc account NAME      Switch to a specific account"
+    echo ""
     echo "  INFO"
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
@@ -673,12 +681,107 @@ EOF
     echo "    Need speed?        →  cc sonnet  →  open new session"
     echo "    Need cheapest?     →  cc haiku   →  open new session"
     echo "    Back to primary?   →  cc opus    →  open new session"
+    echo "    All limits hit?    →  cc account team2  →  rotate account"
     echo ""
     ;;
 
   scan)
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     exec python3 "${SCRIPT_DIR}/cc-scan" "$@"
+    ;;
+
+  usage)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    shift
+    exec python3 "${SCRIPT_DIR}/cc-usage" "$@"
+    ;;
+
+  account)
+    name="${2:-}"
+    if [[ -z "$name" ]]; then
+      echo ""
+      echo "  Current: ${CLAUDE_CONFIG_DIR:-~/.claude (default)}"
+      echo ""
+      echo "  Available accounts:"
+      # List standalone accounts
+      for d in "${CONFIG_DIR}/accounts/"*/; do
+        [[ -d "$d" ]] && echo "    $(basename "$d")"
+      done
+      # List ccs profiles
+      for d in "${HOME}/.ccs/instances/"*/; do
+        [[ -d "$d" ]] && echo "    ccs:$(basename "$d")"
+      done
+      echo "    default  (~/.claude)"
+      echo ""
+      echo "  Usage: cc account <name>"
+      echo ""
+      exit 0
+    fi
+    # Resolve account directory
+    acct_dir=""
+    if [[ "$name" == "default" ]]; then
+      acct_dir="${HOME}/.claude"
+    elif [[ -d "${CONFIG_DIR}/accounts/${name}" ]]; then
+      acct_dir="${CONFIG_DIR}/accounts/${name}"
+    elif [[ "$name" == ccs:* && -d "${HOME}/.ccs/instances/${name#ccs:}" ]]; then
+      acct_dir="${HOME}/.ccs/instances/${name#ccs:}"
+    elif [[ -d "${HOME}/.ccs/instances/${name}" ]]; then
+      acct_dir="${HOME}/.ccs/instances/${name}"
+    else
+      echo "  ✗ Account '${name}' not found." >&2
+      echo "  Run 'cc account' to list available accounts." >&2
+      exit 1
+    fi
+    # Write CLAUDE_CONFIG_DIR into env.sh (append to existing provider config)
+    if grep -q CLAUDE_CONFIG_DIR "$ENV_FILE" 2>/dev/null; then
+      sed -i "s|^export CLAUDE_CONFIG_DIR=.*|export CLAUDE_CONFIG_DIR=${acct_dir}|" "$ENV_FILE"
+    else
+      echo "export CLAUDE_CONFIG_DIR=${acct_dir}" >> "$ENV_FILE"
+    fi
+    echo ""
+    echo "  → Account: ${name} (${acct_dir})"
+    if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
+      echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    fi
+    echo ""
+    ;;
+
+  setup-accounts)
+    echo ""
+    echo "  Multi-Account Setup"
+    echo "  ───────────────────"
+    echo ""
+    echo "  This sets up isolated Claude accounts for rotating through rate limits."
+    echo "  Each account gets its own OAuth token and usage quota."
+    echo ""
+    ACCOUNTS_BASE="${CONFIG_DIR}/accounts"
+    mkdir -p "$ACCOUNTS_BASE"
+    read -p "  How many accounts to set up? [6] " count
+    count="${count:-6}"
+    echo ""
+    for i in $(seq 1 "$count"); do
+      read -p "  Name for account ${i} [team${i}]: " aname
+      aname="${aname:-team${i}}"
+      acct_path="${ACCOUNTS_BASE}/${aname}"
+      if [[ -d "$acct_path" && -f "${acct_path}/.credentials.json" ]]; then
+        echo "    ✓ ${aname} already exists ($(basename "$acct_path"))"
+      else
+        mkdir -p "$acct_path"
+        echo "    Created ${acct_path}"
+        echo "    → Authenticate now? This opens a browser window."
+        read -p "    Auth ${aname}? [Y/n] " do_auth
+        if [[ ! "$do_auth" =~ ^[Nn]$ ]]; then
+          echo "    Opening browser for ${aname}..."
+          CLAUDE_CONFIG_DIR="$acct_path" claude /login 2>/dev/null || \
+            echo "    ⚠ Auth failed or claude not in PATH. Auth manually:"
+          echo "    CLAUDE_CONFIG_DIR=${acct_path} claude"
+        fi
+      fi
+      echo ""
+    done
+    echo "  Done! Check status: cc usage"
+    echo "  Switch account:     cc account team1"
+    echo ""
     ;;
 
   version)

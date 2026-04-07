@@ -4,8 +4,9 @@
 CLI tool for switching Claude Code between API providers and model tiers.
 
 ## File Map
-- `cc` — Main bash script (~600 lines). Provider switches (incl. Ollama), model tier changes, setup wizards, status, check, help.
+- `cc` — Main bash script (~750 lines). Provider switches (incl. Ollama), model tier changes, multi-account management, setup wizards, status, check, help.
 - `cc-scan` — Python script. Tests all 5 models × 5 providers in parallel, renders color matrix. Requires `httpx`.
+- `cc-usage` — Python script. Checks usage/rate limits across multiple Teams accounts. Probes `api.anthropic.com/api/oauth/usage`. Requires `httpx`.
 - `cc-test` — Bash test suite (70 local state checks, no API calls).
 - `cc-api-test` — Original curl-based API test (superseded by `cc scan`).
 - `install.sh` — Adds project dir to PATH.
@@ -74,6 +75,22 @@ cc ollama deepseek-r1:70b   # Switch + override model
 Tier mapping: `cc opus`/`cc sonnet`/`cc haiku` work on the ollama provider by mapping to models configured in `ollama.env` via `ANTHROPIC_DEFAULT_*_MODEL` env vars.
 
 Known limitations: streaming tool call timeouts (Ollama #14858), `/v1/messages/count_tokens` 404 degradation (#13949), 64K+ context required (`num_ctx`).
+
+## Multi-Account Teams Rotation
+
+For rotating across multiple Teams accounts to avoid rate limits:
+
+```bash
+cc setup-accounts            # Set up 6 isolated account directories
+cc usage                     # Quick status (metadata only)
+cc usage --probe             # Probe API for rate limit status + reset times
+cc account team2             # Switch to a specific account
+cc account                   # List all accounts
+```
+
+Account directories: `~/.config/claude-code/accounts/<name>/` (each has its own `.credentials.json`). Also discovers ccs profiles from `~/.ccs/instances/`.
+
+Usage probe hits `api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20`. Returns 200 with utilization windows (5h, 7d, per-model) or 429 with `retry-after` when rate-limited.
 
 ## Integration with cloud-chat-assistant
 
