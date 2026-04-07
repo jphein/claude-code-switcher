@@ -455,27 +455,14 @@ def _dedup_org_overage(results):
 def render_table(results, do_probe):
     """Print results as a formatted table."""
     has_usage = do_probe and any(r.get("five_hour_util") is not None for r in results)
-    has_org = any(r.get("org_name") for r in results)
-    has_sonnet = any(r.get("seven_day_sonnet_util") is not None for r in results)
-    has_grant = any(r.get("grant_amount_cents") for r in results)
 
     if has_usage:
         cols = [
             ("Account", 12, lambda r: r["name"]),
             ("Status", 11, lambda r: fmt_status(r)),
-        ]
-        if has_org:
-            cols.append(("Org", 14, lambda r: fmt_org(r)))
-        cols += [
             ("5h", 7, lambda r: fmt_5h(r)),
             ("7d", 7, lambda r: fmt_7d(r)),
-        ]
-        if has_sonnet:
-            cols.append(("Son 7d", 7, lambda r: fmt_sonnet(r)))
-        cols.append(("Overage", 9, lambda r: fmt_overage(r)))
-        if has_grant:
-            cols.append(("Left", 6, lambda r: fmt_remaining(r)))
-        cols += [
+            ("Overage", 9, lambda r: fmt_overage(r)),
             ("5h Reset", 16, lambda r: fmt_5h_reset(r)),
             ("7d Reset", 12, lambda r: fmt_7d_reset(r)),
             ("Ses", 3, lambda r: str(r.get("sessions", 0))),
