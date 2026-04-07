@@ -340,7 +340,9 @@ def fmt_sonnet(info):
 
 
 def fmt_overage(info):
-    """Format overage: spent / grant, or just spent."""
+    """Format overage: spent / grant, or just spent. Blank if deduped."""
+    if info.get("extra_deduped"):
+        return "↑"
     if not info.get("extra_enabled"):
         return "—"
     used = info.get("extra_used")
@@ -351,7 +353,6 @@ def fmt_overage(info):
     grant = info.get("grant_amount_cents")
     if grant and int(grant) > 0:
         grant_f = int(grant) / 100
-        remaining = grant_f - used_f
         return f"${used_f:.0f}/${grant_f:.0f}"
     if used_f > 0:
         return f"${used_f:.2f}"
@@ -359,7 +360,9 @@ def fmt_overage(info):
 
 
 def fmt_remaining(info):
-    """Format remaining overage credits."""
+    """Format remaining overage credits. Blank if deduped."""
+    if info.get("extra_deduped"):
+        return "↑"
     grant = info.get("grant_amount_cents")
     used = info.get("extra_used")
     if grant and used is not None:
@@ -391,6 +394,22 @@ def fmt_reset(info):
 
 
 # ── Table rendering ──────────────────────────────────────────────────────────
+
+def _dedup_org_overage(results):
+    """Overage grant is org-level, not per-seat. Keep it only on the first account per org."""
+    seen_orgs = set()
+    for r in results:
+        org = r.get("org_uuid")
+        if not org:
+            continue
+        if org in seen_orgs:
+            # Clear per-seat overage display — already shown on first account for this org
+            r.pop("grant_amount_cents", None)
+            r.pop("extra_used", None)
+            r["extra_deduped"] = True
+        else:
+            seen_orgs.add(org)
+
 
 def render_table(results, do_probe):
     """Print results as a formatted table."""
@@ -515,8 +534,14 @@ def main():
         for f in as_completed(futures):
             results.append(f.result())
 
-    # Sort: default first, then alphabetical
-    results.sort(key=lambda r: ("" if r["name"] == "default" else r["name"]))
+    # Sort: accounts with overage data first (so dedup keeps the richest), then alphabetical
+    results.sort(key=lambda r: (
+        0 if r.get("extra_used") and float(r.get("extra_used", 0)) > 0 else 1,
+        "" if r["name"] == "default" else r["name"],
+    ))
+
+    # Overage grant is org-level — only show it once per org
+    _dedup_org_overage(results)
 
     if do_json:
         # Include everything for scripting
