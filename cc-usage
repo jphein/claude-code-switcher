@@ -32,6 +32,16 @@ ACCOUNTS_DIR = CONFIG_DIR / "accounts"
 API_BASE = "https://api.anthropic.com"
 AUTH_HEADERS = {"anthropic-beta": "oauth-2025-04-20", "Content-Type": "application/json"}
 
+# Bedrock pricing per 1M tokens (input, output) in USD
+BEDROCK_PRICING = {
+    "us.anthropic.claude-opus-4-6-v1":              (15.00, 75.00),
+    "us.anthropic.claude-opus-4-5-20251101-v1:0":   (15.00, 75.00),
+    "us.anthropic.claude-sonnet-4-6":               (3.00,  15.00),
+    "us.anthropic.claude-sonnet-4-5-20250929-v1:0": (3.00,  15.00),
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0":  (0.80,  4.00),
+}
+BEDROCK_REGION = "us-west-1"
+
 try:
     import httpx
     HAS_HTTPX = True
@@ -211,6 +221,112 @@ def _probe_overage_grant(token, org_uuid):
 
     except Exception:
         return {}
+
+
+# ── Bedrock cost tracking ─────────────────────────────────────────────────────
+
+def _probe_bedrock_costs():
+    """Query CloudWatch for Bedrock token usage and calculate costs."""
+    try:
+        import subprocess
+        now = datetime.now(timezone.utc)
+        start = (now - __import__("datetime").timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+        end = now.strftime("%Y-%m-%dT%H:%M:%S")
+
+        models = list(BEDROCK_PRICING.keys())
+        results = {}
+
+        for metric in ("InputTokenCount", "OutputTokenCount"):
+            queries = []
+            for i, model_id in enumerate(models):
+                safe_id = f"m{i}{metric[0].lower()}"
+                queries.append({
+                    "Id": safe_id,
+                    "MetricStat": {
+                        "Metric": {
+                            "Namespace": "AWS/Bedrock",
+                            "MetricName": metric,
+                            "Dimensions": [{"Name": "ModelId", "Value": model_id}],
+                        },
+                        "Period": 2592000,
+                        "Stat": "Sum",
+                    },
+                })
+
+            # Find aws binary
+            aws_bin = None
+            for p in [
+                os.path.expanduser("~/.local/share/mise/installs/awscli/2.34.24/.mise-bins/aws"),
+                "/usr/local/bin/aws",
+                "/usr/bin/aws",
+            ]:
+                if os.path.isfile(p):
+                    aws_bin = p
+                    break
+
+            if not aws_bin:
+                # Try finding via mise
+                try:
+                    r = subprocess.run(
+                        ["bash", "-c", 'eval "$(~/.local/bin/mise activate bash)" && which aws'],
+                        capture_output=True, text=True, timeout=5)
+                    if r.returncode == 0 and r.stdout.strip():
+                        aws_bin = r.stdout.strip()
+                except Exception:
+                    pass
+
+            if not aws_bin:
+                return None
+
+            proc = subprocess.run(
+                [aws_bin, "cloudwatch", "get-metric-data",
+                 "--metric-data-queries", json.dumps(queries),
+                 "--start-time", start,
+                 "--end-time", end,
+                 "--region", BEDROCK_REGION,
+                 "--output", "json"],
+                capture_output=True, text=True, timeout=30,
+            )
+
+            if proc.returncode != 0:
+                return None
+
+            data = json.loads(proc.stdout)
+            for i, model_id in enumerate(models):
+                safe_id = f"m{i}{metric[0].lower()}"
+                for mr in data.get("MetricDataResults", []):
+                    if mr["Id"] == safe_id and mr["Values"]:
+                        if model_id not in results:
+                            results[model_id] = {"input": 0, "output": 0}
+                        key = "input" if "Input" in metric else "output"
+                        results[model_id][key] = mr["Values"][0]
+
+        # Calculate costs
+        total_cost = 0
+        model_costs = []
+        for model_id, tokens in results.items():
+            if model_id in BEDROCK_PRICING:
+                in_price, out_price = BEDROCK_PRICING[model_id]
+                cost = (tokens["input"] / 1_000_000 * in_price +
+                        tokens["output"] / 1_000_000 * out_price)
+                total_cost += cost
+                # Short model name
+                short = model_id.replace("us.anthropic.claude-", "").split("-v1")[0].split("-2025")[0]
+                model_costs.append({
+                    "model": short,
+                    "input_tokens": int(tokens["input"]),
+                    "output_tokens": int(tokens["output"]),
+                    "cost": round(cost, 2),
+                })
+
+        return {
+            "total_cost": round(total_cost, 2),
+            "period_days": 30,
+            "models": sorted(model_costs, key=lambda m: -m["cost"]),
+        }
+
+    except Exception:
+        return None
 
 
 def check_sessions(config_dir):
@@ -495,7 +611,7 @@ def render_table(results, do_probe):
     print()
 
 
-def render_summary(results):
+def render_summary(results, bedrock=None):
     """Print summary below the table."""
     # Best account recommendation (lowest 7d utilization — more strategic than 5h)
     with_7d = [r for r in results if r.get("seven_day_util") is not None and r.get("token_valid")]
@@ -528,6 +644,12 @@ def render_summary(results):
         if total_grant > 0:
             parts.append(f"${remaining:.2f} remaining of ${total_grant:.0f} grant")
         print(f"  {' / '.join(parts)}")
+
+    # Bedrock costs
+    if bedrock:
+        print(f"  Bedrock (30d): ${bedrock['total_cost']:.2f}  ", end="")
+        model_parts = [f"{m['model']} ${m['cost']:.2f}" for m in bedrock["models"] if m["cost"] > 0.01]
+        print(f"({', '.join(model_parts)})" if model_parts else "")
 
     # Rate-limited accounts
     limited = [r for r in results if r.get("probe") == "rate_limited"]
@@ -573,19 +695,25 @@ def main():
     # Overage grant is org-level — only show it once per org
     _dedup_org_overage(results)
 
+    # Bedrock costs (runs in parallel with account probes above)
+    bedrock = None
+    if do_probe:
+        bedrock = _probe_bedrock_costs()
+
     if do_json:
-        # Include everything for scripting
-        # Strip raw token data for safety
         safe = []
         for r in results:
             s = {k: v for k, v in r.items() if k != "usage_raw"}
             safe.append(s)
-        print(json.dumps(safe, indent=2))
+        output = {"accounts": safe}
+        if bedrock:
+            output["bedrock"] = bedrock
+        print(json.dumps(output, indent=2))
     else:
         render_table(results, do_probe)
 
         if do_probe:
-            render_summary(results)
+            render_summary(results, bedrock)
         else:
             print("  Tip: cc usage --probe  (full API check: usage, org, credits)")
             print()
