@@ -156,6 +156,16 @@ _write_env() {
         echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=$(_ollama_sonnet_model)"
         echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=$(_ollama_haiku_model)"
         ;;
+      teamclaude)
+        # Multi-account proxy — rotates TechEMPOWER seats based on quota.
+        # Proxy config (port + auto-generated apiKey) lives in ~/.config/teamclaude.json
+        local tc_config="${HOME}/.config/teamclaude.json"
+        local tc_port tc_key
+        tc_port=$(jq -r '.proxy.port // 3456' "$tc_config" 2>/dev/null)
+        tc_key=$(jq -r '.proxy.apiKey // empty' "$tc_config" 2>/dev/null)
+        echo "export ANTHROPIC_BASE_URL=http://localhost:${tc_port}"
+        echo "export ANTHROPIC_API_KEY=${tc_key}"
+        ;;
     esac
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -498,12 +508,13 @@ _status() {
   echo ""
   echo "  ╔══ Claude Code Backend ══════════════════╗"
   case "$provider" in
-    teams)   echo "  ║  Provider : Claude Teams (OAuth)        ║" ;;
-    direct)  echo "  ║  Provider : Direct Anthropic API        ║" ;;
-    bedrock) echo "  ║  Provider : Amazon Bedrock (us-west-1)  ║" ;;
-    vertex)  echo "  ║  Provider : Google Vertex AI            ║" ;;
-    foundry) echo "  ║  Provider : Azure AI Foundry            ║" ;;
-    ollama)  echo "  ║  Provider : Ollama (local)               ║" ;;
+    teams)      echo "  ║  Provider : Claude Teams (OAuth)        ║" ;;
+    direct)     echo "  ║  Provider : Direct Anthropic API        ║" ;;
+    bedrock)    echo "  ║  Provider : Amazon Bedrock (us-west-1)  ║" ;;
+    vertex)     echo "  ║  Provider : Google Vertex AI            ║" ;;
+    foundry)    echo "  ║  Provider : Azure AI Foundry            ║" ;;
+    ollama)     echo "  ║  Provider : Ollama (local)              ║" ;;
+    teamclaude) echo "  ║  Provider : teamclaude (4-seat proxy)   ║" ;;
   esac
   echo "  ║  Model    : ${model}"
   case "$model" in
@@ -514,7 +525,7 @@ _status() {
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
-  echo "  Providers : cc teams | direct | bedrock | vertex | foundry | ollama"
+  echo "  Providers : cc teams | direct | bedrock | vertex | foundry | ollama | teamclaude"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo "  Diagnose  : cc check"
   echo ""
@@ -539,6 +550,38 @@ case "$CMD" in
     echo "  → Switched to ${provider}"
     # If called via shell function wrapper (bashrc cc()), env is auto-sourced.
     # If called directly, remind user to source.
+    if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
+      echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    fi
+    echo ""
+    ;;
+
+  teamclaude)
+    # Multi-account proxy on localhost:3456 — rotates 4 TechEMPOWER seats by quota
+    tc_config="${HOME}/.config/teamclaude.json"
+    if [[ ! -f "$tc_config" ]]; then
+      echo ""
+      echo "  ⚠ teamclaude not configured. Run:"
+      echo "      teamclaude import --from ~/.config/claude-code/accounts/<slot>/.credentials.json"
+      echo ""
+      exit 1
+    fi
+    tc_port=$(jq -r '.proxy.port // 3456' "$tc_config" 2>/dev/null)
+    if ! ss -tln 2>/dev/null | grep -q ":${tc_port} "; then
+      echo ""
+      echo "  ⚠ teamclaude proxy not listening on :${tc_port}."
+      echo "      systemctl --user start teamclaude   # if installed as service"
+      echo "      teamclaude server                   # one-off with TUI"
+      echo ""
+      exit 1
+    fi
+    provider="teamclaude"
+    model=$(_opus_model "$provider")
+    echo "$provider" > "$ACTIVE_FILE"
+    _write_env "$provider"
+    _set_model "$model"
+    echo ""
+    echo "  → Switched to teamclaude (proxy :${tc_port}, 4 TechEMPOWER seats, auto-rotate at 98%)"
     if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
       echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
     fi
@@ -676,6 +719,7 @@ EOF
     echo "    cc foundry    Azure AI Foundry"
     echo "    cc ollama     Ollama local models (v0.14+)"
     echo "    cc ollama MODEL  Switch + set model (e.g. cc ollama deepseek-r1:70b)"
+    echo "    cc teamclaude Multi-account proxy (rotates 4 TechEMPOWER seats at 98%)"
     echo ""
     echo "  MODEL TIER  (within current provider)"
     echo "    cc opus       Opus 4.6   — primary"
