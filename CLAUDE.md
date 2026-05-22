@@ -113,14 +113,14 @@ Each window has `utilization` (percentage) and `resets_at` (ISO timestamp). A 42
 
 ### Current Accounts
 
-| Name | Org |
-|------|-----|
-| `default` | ~/.claude (primary) |
-| `jphein` | JP's personal Teams |
-| `claude` | Teams org 1 |
-| `claude2` | Teams org 2 |
-| `claude3` | Teams org 3 |
-| `claude4` | Teams org 4 |
+| Slot | Account | Notes |
+|------|---------|-------|
+| `claude` | claude@techempower.org | TechEMPOWER seat 1 |
+| `claude2` | claude2@techempower.org | TechEMPOWER seat 2 |
+| `claude3` | claude3@techempower.org | TechEMPOWER seat 3 |
+| `jphein` | jp@techempower.org | TechEMPOWER seat 4 (JP's own seat; monthly overage credits enabled) |
+
+All 4 are owner-seats on the same TechEMPOWER Teams org, each with its own independent 5h/7d quota pool — **4 unique rotation quotas total**. The decommissioned `claude4` seat (claude4@techempower.org) was removed 2026-05-22.
 
 ## Integration with cloud-chat-assistant
 
