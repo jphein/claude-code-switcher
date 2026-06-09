@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: teams | direct | bedrock | vertex | foundry | ollama [MODEL] | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
+# Commands: teams | teamclaude | direct | bedrock | vertex | foundry | ollama [MODEL] | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -145,6 +145,17 @@ _write_env() {
         # OAuth-based Claude Teams — clear API key so Claude Code uses browser login
         echo "unset ANTHROPIC_API_KEY"
         ;;
+      teamclaude)
+        # Local teamclaude proxy (multi-account Teams multiplexer on :3456)
+        local tc_env="${CONFIG_DIR}/teamclaude.env"
+        if [[ -f "$tc_env" ]]; then
+          cat "$tc_env"
+        else
+          echo "# WARNING: ${tc_env} missing — create it with:"
+          echo "#   export ANTHROPIC_BASE_URL=http://localhost:3456"
+          echo "#   export ANTHROPIC_API_KEY=tc-..."
+        fi
+        ;;
       ollama)
         # Local Ollama — Anthropic-compatible API (requires Ollama v0.14+)
         local url; url=$(_ollama_url)
@@ -183,6 +194,23 @@ _check() {
 
   # teams
   names+=("teams"); statuses+=("skip:OAuth (use 'claude')")
+
+  # teamclaude
+  local tc_env="${CONFIG_DIR}/teamclaude.env"
+  if [[ -f "$tc_env" ]]; then
+    local tc_url tc_key
+    tc_url=$(sed -n "s/^export ANTHROPIC_BASE_URL=//p" "$tc_env" | tail -1)
+    tc_key=$(sed -n "s/^export ANTHROPIC_API_KEY=//p" "$tc_env" | tail -1)
+    local code
+    code=$(_probe_http "${tc_url}/v1/messages" \
+      -H "x-api-key: ${tc_key}" \
+      -H "anthropic-version: 2023-06-01" \
+      -H "content-type: application/json" \
+      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+    names+=("teamclaude"); statuses+=("$code")
+  else
+    names+=("teamclaude"); statuses+=("skip:No teamclaude.env")
+  fi
 
   # direct
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
@@ -499,6 +527,7 @@ _status() {
   echo "  ╔══ Claude Code Backend ══════════════════╗"
   case "$provider" in
     teams)   echo "  ║  Provider : Claude Teams (OAuth)        ║" ;;
+    teamclaude) echo "  ║  Provider : teamclaude (proxy :3456)    ║" ;;
     direct)  echo "  ║  Provider : Direct Anthropic API        ║" ;;
     bedrock) echo "  ║  Provider : Amazon Bedrock (us-west-1)  ║" ;;
     vertex)  echo "  ║  Provider : Google Vertex AI            ║" ;;
@@ -514,7 +543,7 @@ _status() {
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
-  echo "  Providers : cc teams | direct | bedrock | vertex | foundry | ollama"
+  echo "  Providers : cc teams | teamclaude | direct | bedrock | vertex | foundry | ollama"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo "  Diagnose  : cc check"
   echo ""
@@ -539,6 +568,23 @@ case "$CMD" in
     echo "  → Switched to ${provider}"
     # If called via shell function wrapper (bashrc cc()), env is auto-sourced.
     # If called directly, remind user to source.
+    if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
+      echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
+    fi
+    echo ""
+    ;;
+
+  teamclaude)
+    provider="teamclaude"
+    echo "$provider" > "$ACTIVE_FILE"
+    _write_env "$provider"
+    # Restore the pinned model if teamclaude.env carries one (comment line
+    # `# TEAMCLAUDE_MODEL=fable`); otherwise leave ~/.claude/settings.json
+    # untouched — the proxy handles routing either way.
+    tc_model=$(sed -n "s/^#\s*TEAMCLAUDE_MODEL=//p" "${CONFIG_DIR}/teamclaude.env" 2>/dev/null | tail -1)
+    [[ -n "$tc_model" ]] && _set_model "$tc_model"
+    echo ""
+    echo "  → Switched to teamclaude (local proxy :3456)"
     if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
       echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
     fi

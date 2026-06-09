@@ -14,11 +14,12 @@ CLI tool for switching Claude Code between API providers, model tiers, and Teams
 ## State Files
 | File | Purpose |
 |------|---------|
-| `~/.config/claude-code/active-backend` | Current provider: teams\|direct\|bedrock\|vertex\|foundry\|ollama |
+| `~/.config/claude-code/active-backend` | Current provider: teams\|teamclaude\|direct\|bedrock\|vertex\|foundry\|ollama |
 | `~/.config/claude-code/env.sh` | Sourced by shell for provider env vars + account selection |
 | `~/.config/claude-code/direct.env` | Anthropic API key |
 | `~/.config/claude-code/foundry.env` | Azure endpoint + key |
-| `~/.config/claude-code/ollama.env` | Ollama URL, model, tier mappings |
+| `~/.config/claude-code/ollama.env` | Ollama URL, model, tier mappings (lines must start with `export `) |
+| `~/.config/claude-code/teamclaude.env` | teamclaude proxy URL + tc- key; optional `# TEAMCLAUDE_MODEL=fable` pin restored on switch |
 | `~/.config/claude-code/accounts/<name>/` | Per-account config dirs (each has `.credentials.json`) |
 | `~/.aws/credentials` | AWS credentials for Bedrock |
 | `~/.claude/settings.json` | Claude Code settings (model field) |
