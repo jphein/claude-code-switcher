@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc — Claude Code backend & model switcher
-# Commands: teams | teamclaude | direct | bedrock | vertex | foundry | ollama [MODEL] | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
+# Commands: teams | teamclaude [--mitm] | direct | bedrock | vertex | foundry | ollama [MODEL] | opus | opus45 | sonnet | sonnet45 | haiku | check | status | setup-* | help
 
 CONFIG_DIR="${HOME}/.config/claude-code"
 ACTIVE_FILE="${CONFIG_DIR}/active-backend"
@@ -101,6 +101,7 @@ _write_env() {
     echo "unset ANTHROPIC_FOUNDRY_RESOURCE ANTHROPIC_FOUNDRY_BASE_URL ANTHROPIC_FOUNDRY_API_KEY"
     echo "unset ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL"
     echo "unset CLAUDE_CONFIG_DIR"
+    echo "unset HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NODE_EXTRA_CA_CERTS"
     echo "export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1  # Let shell set title (for hostname-in-title)"
     case "$provider" in
       bedrock)
@@ -145,15 +146,22 @@ _write_env() {
         # OAuth-based Claude Teams — clear API key so Claude Code uses browser login
         echo "unset ANTHROPIC_API_KEY"
         ;;
-      teamclaude)
+      teamclaude|teamclaude-mitm)
         # Local teamclaude proxy (multi-account Teams multiplexer on :3456)
+        # teamclaude = normal reverse-proxy (ANTHROPIC_BASE_URL)
+        # teamclaude-mitm = MITM forward-proxy (HTTPS_PROXY + CA cert)
+        local tc_mitm=""
+        [[ "$provider" == "teamclaude-mitm" ]] && tc_mitm="--mitm"
         local tc_env="${CONFIG_DIR}/teamclaude.env"
-        if [[ -f "$tc_env" ]]; then
+        if command -v teamclaude &>/dev/null; then
+          teamclaude env $tc_mitm
+          teamclaude env $tc_mitm > "$tc_env" 2>/dev/null
+        elif [[ -f "$tc_env" ]]; then
           cat "$tc_env"
         else
-          echo "# WARNING: ${tc_env} missing — create it with:"
-          echo "#   export ANTHROPIC_BASE_URL=http://localhost:3456"
-          echo "#   export ANTHROPIC_API_KEY=tc-..."
+          echo "# WARNING: teamclaude CLI not found and ${tc_env} missing"
+          echo "# Install: cd ~/Projects/teamclaude && npm link"
+          echo "# Then: cc setup-teamclaude"
         fi
         ;;
       ollama)
@@ -195,22 +203,11 @@ _check() {
   # teams
   names+=("teams"); statuses+=("skip:OAuth (use 'claude')")
 
-  # teamclaude
-  local tc_env="${CONFIG_DIR}/teamclaude.env"
-  if [[ -f "$tc_env" ]]; then
-    local tc_url tc_key
-    tc_url=$(sed -n "s/^export ANTHROPIC_BASE_URL=//p" "$tc_env" | tail -1)
-    tc_key=$(sed -n "s/^export ANTHROPIC_API_KEY=//p" "$tc_env" | tail -1)
-    local code
-    code=$(_probe_http "${tc_url}/v1/messages" \
-      -H "x-api-key: ${tc_key}" \
-      -H "anthropic-version: 2023-06-01" \
-      -H "content-type: application/json" \
-      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
-    names+=("teamclaude"); statuses+=("$code")
-  else
-    names+=("teamclaude"); statuses+=("skip:No teamclaude.env")
-  fi
+  # teamclaude — probe the control endpoint (works for both reverse-proxy and MITM)
+  local tc_port=3456
+  local code
+  code=$(_probe_http "http://localhost:${tc_port}/teamclaude/status")
+  names+=("teamclaude"); statuses+=("$code")
 
   # direct
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
@@ -543,7 +540,7 @@ _status() {
   esac
   echo "  ╚═════════════════════════════════════════╝"
   echo ""
-  echo "  Providers : cc teams | teamclaude | direct | bedrock | vertex | foundry | ollama"
+  echo "  Providers : cc teams | teamclaude [--mitm] | direct | bedrock | vertex | foundry | ollama"
   echo "  Models    : cc opus | opus45 | sonnet | sonnet45 | haiku"
   echo "  Diagnose  : cc check"
   echo ""
@@ -575,16 +572,21 @@ case "$CMD" in
     ;;
 
   teamclaude)
-    provider="teamclaude"
-    echo "$provider" > "$ACTIVE_FILE"
+    # cc teamclaude        → normal reverse-proxy mode
+    # cc teamclaude --mitm → MITM forward-proxy mode
+    if [[ "${2:-}" == "--mitm" ]]; then
+      provider="teamclaude-mitm"
+      mode_label="MITM proxy"
+    else
+      provider="teamclaude"
+      mode_label="reverse proxy"
+    fi
+    echo "teamclaude" > "$ACTIVE_FILE"
     _write_env "$provider"
-    # Restore the pinned model if teamclaude.env carries one (comment line
-    # `# TEAMCLAUDE_MODEL=fable`); otherwise leave ~/.claude/settings.json
-    # untouched — the proxy handles routing either way.
     tc_model=$(sed -n "s/^#\s*TEAMCLAUDE_MODEL=//p" "${CONFIG_DIR}/teamclaude.env" 2>/dev/null | tail -1)
     [[ -n "$tc_model" ]] && _set_model "$tc_model"
     echo ""
-    echo "  → Switched to teamclaude (local proxy :3456)"
+    echo "  → Switched to teamclaude (${mode_label} :3456)"
     if [[ "${CC_AUTO_SOURCE:-}" != "1" ]]; then
       echo "    Run: source ~/.config/claude-code/env.sh   (or open a new terminal)"
     fi
@@ -681,6 +683,30 @@ EOF
   setup-teams)
     _setup_teams
     ;;
+  setup-teamclaude)
+    echo ""
+    echo "  teamclaude Setup"
+    echo "  ──────────────────"
+    echo ""
+    echo "  The teamclaude proxy allows multi-account Teams management."
+    echo ""
+    echo "  Requirements:"
+    echo "    • Local teamclaude proxy running on :3456"
+    echo "    • teamclaude CLI installed (npm link from ~/Projects/teamclaude)"
+    echo ""
+    echo "  Modes:"
+    echo "    cc teamclaude          Reverse proxy (ANTHROPIC_BASE_URL)"
+    echo "    cc teamclaude --mitm   MITM forward proxy (HTTPS_PROXY + CA cert)"
+    echo ""
+    if command -v teamclaude &>/dev/null; then
+      echo "  ✓ teamclaude CLI found"
+      echo "  Switch with: cc teamclaude  or  cc teamclaude --mitm"
+    else
+      echo "  teamclaude CLI not found. Install with:"
+      echo "    cd ~/Projects/teamclaude && npm link"
+    fi
+    echo ""
+    ;;
 
   setup-ollama)
     _setup_ollama
@@ -693,6 +719,7 @@ EOF
     echo "  cc setup-bedrock    Configure AWS credentials for Bedrock"
     echo "  cc setup-vertex     Authenticate with Google Cloud"
     echo "  cc setup-foundry    Configure Azure AI Foundry endpoint"
+    echo "  cc setup-teamclaude   Configure teamclaude proxy"
     echo "  cc setup-ollama     Configure local Ollama instance"
     echo "  cc setup-accounts   Set up multiple Teams accounts"
     echo ""
@@ -720,6 +747,8 @@ EOF
     echo "    cc bedrock    Amazon Bedrock (us-west-1)"
     echo "    cc vertex     Google Vertex AI"
     echo "    cc foundry    Azure AI Foundry"
+    echo "    cc teamclaude          Local teamclaude reverse proxy (multi-account Teams)"
+    echo "    cc teamclaude --mitm   MITM forward proxy (intercepts HTTPS, TUI activity feed)"
     echo "    cc ollama     Ollama local models (v0.14+)"
     echo "    cc ollama MODEL  Switch + set model (e.g. cc ollama deepseek-r1:70b)"
     echo ""

@@ -126,3 +126,23 @@ All 4 are owner-seats on the same TechEMPOWER Teams org, each with its own indep
 ## Integration with cloud-chat-assistant
 
 The `cc-scan` script reads credentials from `~/.config/cloud-chat-assistant/config.json` as fallback when provider-specific credential files are missing. This means AWS/Azure creds configured for the chat assistant are automatically available to `cc scan`.
+
+## teamclaude Provider
+
+The `teamclaude` provider enables integration with a local teamclaude proxy that multiplexes multiple Claude Teams accounts, allowing for rotation through different accounts to avoid rate limits. The proxy runs on port 3456 and handles authentication for multiple teams accounts.
+
+To set up the teamclaude provider:
+```bash
+cc setup-teamclaude
+```
+
+This requires:
+- A local teamclaude proxy running on :3456
+- Configuration in `~/.config/claude-code/teamclaude.env` with:
+  - `ANTHROPIC_BASE_URL=http://localhost:3456`
+  - `ANTHROPIC_API_KEY=tc-...` (your teamclaude API key)
+
+The proxy can be pinned to a specific model by adding a comment line to `teamclaude.env`:
+```
+# TEAMCLAUDE_MODEL=fable
+```

@@ -20,6 +20,12 @@ PATH_LINE="export PATH=\"${SCRIPT_DIR}:\$PATH\""
 # Wrapper function: auto-sources env.sh after provider/model switches
 WRAPPER='cc() { command cc "$@" && [[ -f ~/.config/claude-code/env.sh ]] && source ~/.config/claude-code/env.sh; }'
 
+# Wrapper function: re-source the active provider env on every claude launch, so
+# claude uses the current cc selection even in long-lived / reattached tmux panes
+# whose shell environment predates the last switch (env.sh is read at shell startup
+# only — persistent tmux sessions never re-run it).
+CLAUDE_WRAPPER='claude() { [[ -f ~/.config/claude-code/env.sh ]] && source ~/.config/claude-code/env.sh; command claude "$@"; }'
+
 add_to_rc() {
     local rc="$1"
     [[ -f "$rc" ]] || return 0
@@ -44,6 +50,15 @@ add_to_rc() {
         changed=true
     else
         echo "cc() wrapper already in $rc"
+    fi
+
+    # Add claude() wrapper (re-sources env.sh at launch — survives stale tmux/login shells)
+    if ! grep -qF 'claude()' "$rc" 2>/dev/null; then
+        echo "$CLAUDE_WRAPPER" >> "$rc"
+        echo "Added claude() wrapper to $rc"
+        changed=true
+    else
+        echo "claude() wrapper already in $rc"
     fi
 }
 
