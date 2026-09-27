@@ -162,3 +162,7 @@ This disables:
 - **bedrock**: AWS CLI + credentials in ~/.aws/credentials
 - **vertex**: gcloud CLI + authenticated + Vertex AI API enabled + Claude quota
 - **foundry**: Azure AI Foundry endpoint + API key
+
+## License
+
+AGPL-3.0-or-later © 2026 Jeffrey Pine Hein. See [LICENSE](LICENSE).
