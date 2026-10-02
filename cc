@@ -154,10 +154,10 @@ _write_env() {
         [[ "$provider" == "teamclaude-mitm" ]] && tc_mitm="--mitm"
         local tc_env="${CONFIG_DIR}/teamclaude.env"
         if command -v teamclaude &>/dev/null; then
-          teamclaude env $tc_mitm
+          teamclaude env $tc_mitm | _tc_remote_rewrite
           teamclaude env $tc_mitm > "$tc_env" 2>/dev/null
         elif [[ -f "$tc_env" ]]; then
-          cat "$tc_env"
+          _tc_remote_rewrite < "$tc_env"
         else
           echo "# WARNING: teamclaude CLI not found and ${tc_env} missing"
           echo "# Install: cd ~/Projects/teamclaude && npm link"
@@ -178,6 +178,21 @@ _write_env() {
     esac
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
+}
+
+# Remote teamclaude (2026-10-02): when ${CONFIG_DIR}/teamclaude-remote.env exists
+# (TC_REMOTE=host:port, TC_KEY=<proxy clientKey>), point the generated env at that
+# LAN service instead of 127.0.0.1:3456. The key rides as the proxy username
+# (teamclaude reads Proxy-Authorization Basic <key>:). Without the file: unchanged.
+_tc_remote_rewrite() {
+  local f="${CONFIG_DIR}/teamclaude-remote.env"
+  if [[ -f "$f" ]]; then
+    local TC_REMOTE TC_KEY; source "$f"
+    sed -e "s#http://127\.0\.0\.1:3456#http://${TC_KEY}@${TC_REMOTE}#g" \
+        -e "s#http://localhost:3456#http://${TC_REMOTE}#g"
+  else
+    cat
+  fi
 }
 
 _probe_http() {
@@ -206,7 +221,12 @@ _check() {
   # teamclaude — probe the control endpoint (works for both reverse-proxy and MITM)
   local tc_port=3456
   local code
-  code=$(_probe_http "http://localhost:${tc_port}/teamclaude/status")
+  if [[ -f "${CONFIG_DIR}/teamclaude-remote.env" ]]; then
+    local TC_REMOTE TC_KEY; source "${CONFIG_DIR}/teamclaude-remote.env"
+    code=$(_probe_http -H "x-api-key: ${TC_KEY}" "http://${TC_REMOTE}/teamclaude/status")
+  else
+    code=$(_probe_http "http://localhost:${tc_port}/teamclaude/status")
+  fi
   names+=("teamclaude"); statuses+=("$code")
 
   # direct
