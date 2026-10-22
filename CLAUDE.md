@@ -121,7 +121,7 @@ Each window has `utilization` (percentage) and `resets_at` (ISO timestamp). A 42
 | `claude3` | claude3@techempower.org | TechEMPOWER seat 3 |
 | `jphein` | jp@techempower.org | TechEMPOWER seat 4 (JP's own seat; monthly overage credits enabled) |
 
-All 4 are owner-seats on the same TechEMPOWER Teams org, each with its own independent 5h/7d quota pool — **4 unique rotation quotas total**. The decommissioned `claude4` seat (claude4@techempower.org) was removed 2026-05-22.
+All 4 are owner-seats on the same TechEMPOWER Teams org, each with its own independent 5h/7d quota pool — **4 unique rotation quotas total**. `claude4` (claude4@techempower.org), decommissioned 2026-05-22, is a **live seat again** (verified 2026-10-22: active in teamclaude with its own 5h/7d windows). It has no switcher slot here; it serves only through teamclaude's rotation pool, which holds five accounts (these four plus claude4) in the ubox0 VM.
 
 ## Integration with cloud-chat-assistant
 
