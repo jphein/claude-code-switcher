@@ -184,12 +184,23 @@ _write_env() {
 # (TC_REMOTE=host:port, TC_KEY=<proxy clientKey>), point the generated env at that
 # LAN service instead of 127.0.0.1:3456. The key rides as the proxy username
 # (teamclaude reads Proxy-Authorization Basic <key>:). Without the file: unchanged.
+# 2026-10-27: TC_SCHEME=https reaches the proxy's TLS listener (port 3443), so the
+# key no longer crosses the LAN in clear; TC_CA names the CA bundle to trust
+# (the listener CA and the MITM CA together — the proxy's teamclaude-ca-bundle.pem).
 _tc_remote_rewrite() {
   local f="${CONFIG_DIR}/teamclaude-remote.env"
   if [[ -f "$f" ]]; then
-    local TC_REMOTE TC_KEY; source "$f"
-    sed -e "s#http://127\.0\.0\.1:3456#http://${TC_KEY}@${TC_REMOTE}#g" \
-        -e "s#http://localhost:3456#http://${TC_REMOTE}#g"
+    local TC_REMOTE TC_KEY TC_SCHEME TC_CA; source "$f"
+    local scheme="${TC_SCHEME:-http}"
+    if [[ "$scheme" != http && "$scheme" != https ]]; then
+      echo "# WARNING: TC_SCHEME must be http or https (got '${scheme}'); using http"
+      scheme=http
+    fi
+    local ca_rule=()
+    [[ -n "${TC_CA:-}" ]] && ca_rule=(-e "s#^export NODE_EXTRA_CA_CERTS=.*#export NODE_EXTRA_CA_CERTS=${TC_CA}#")
+    sed -e "s#http://127\.0\.0\.1:3456#${scheme}://${TC_KEY}@${TC_REMOTE}#g" \
+        -e "s#http://localhost:3456#${scheme}://${TC_REMOTE}#g" \
+        "${ca_rule[@]}"
   else
     cat
   fi
