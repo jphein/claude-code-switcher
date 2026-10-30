@@ -37,11 +37,11 @@ cc bedrock          Amazon Bedrock (us-west-1)
 cc vertex           Google Vertex AI (us-east5)
 cc foundry          Azure AI Foundry
 
-cc opus             Opus 4.6   -- primary
-cc opus45           Opus 4.5   -- fallback when 4.6 rate-limited
-cc sonnet           Sonnet 4.6 -- fast + capable
-cc sonnet45         Sonnet 4.5 -- extended thinking
-cc haiku            Haiku 4.5  -- fastest, cheapest
+cc opus             Opus 5.5   -- primary
+cc opus45           Opus 4.5   -- legacy fallback
+cc sonnet           Sonnet 5.5 -- fast + capable
+cc sonnet45         Sonnet 4.5 -- legacy; Claude API retires it 2026-11-30
+cc haiku            Haiku 5.5  -- fastest, cheapest
 
 cc check            Test connectivity for all providers
 cc scan             Full model matrix — test all 5 models × 5 providers
@@ -59,7 +59,7 @@ cc-api-test         Test actual API connectivity per provider
 
 ### ⚠️ `cc check`, `cc scan`, `cc-scan` and `cc-api-test` cost money: agents must not run them
 
-Each of these sends a real one-token request ("hi", `max_tokens: 1`) to every configured provider. On Bedrock that bills as AWS Marketplace with the default AWS credentials (`aws bedrock-runtime invoke-model … us.anthropic.claude-opus-4-6-v1`), which promotional credits never cover. In October 2026 a loop of such probes billed Opus 4.6 on realm-cloud on two days: about 551 calls on 10-28 and about 58 on 10-29, seen as roughly 12 input tokens per output token in Cost Explorer.
+Each of these sends a real one-token request ("hi", `max_tokens: 1`) to every configured provider. On Bedrock that bills as AWS Marketplace with the default AWS credentials (`aws bedrock-runtime invoke-model … us.anthropic.claude-opus-5-5`), which promotional credits never cover. In October 2026 a loop of such probes billed Opus 4.6 on realm-cloud on two days: about 551 calls on 10-28 and about 58 on 10-29, seen as roughly 12 input tokens per output token in Cost Explorer.
 
 - **Agents, status lines, prompts, cron jobs and timers:** never run `cc check`, `cc scan`, `cc-scan` or `cc-api-test`. To learn the active provider, read `~/.config/claude-code/active-backend` (and the model from `~/.config/claude-code/env.sh`), or run `cc status`, which reads local files only and makes no network call.
 - **People:** run them by hand only, one at a time, when you are actually debugging a provider.
@@ -75,11 +75,11 @@ Each of these sends a real one-token request ("hi", `max_tokens: 1`) to every co
 
                teams    direct  bedrock  vertex  foundry
   ──────────────────────────────────────────────────────
-     Opus 4.6    --       --   ✓ 1285ms   --      --
+     Opus 5.5    --       --   ✓ 1285ms   --      --
      Opus 4.5    --       --   ✓  958ms   --      --
-   Sonnet 4.6    --       --   ✓  742ms   --      --
+   Sonnet 5.5    --       --   ✓  742ms   --      --
    Sonnet 4.5    --       --   ✓ 1155ms   --      --
-    Haiku 4.5    --       --   ✓  765ms   --      --
+    Haiku 5.5    --       --   ✓  765ms   --      --
   ──────────────────────────────────────────────────────
 ```
 
@@ -131,12 +131,12 @@ Back to primary?   -->  cc opus    -->  open new session
 
 ## Model IDs by Provider
 
-| Provider | Opus 4.6 | Opus 4.5 | Sonnet 4.6 | Sonnet 4.5 | Haiku 4.5 |
+| Provider | Opus 5.5 | Opus 4.5 | Sonnet 5.5 | Sonnet 4.5 | Haiku 5.5 |
 |----------|----------|----------|------------|------------|-----------|
-| teams/direct | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
-| bedrock | us.anthropic.claude-opus-4-6-v1 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-4-6 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-4-5-20251001-v1:0 |
-| vertex | claude-opus-4-6 | claude-opus-4-5@20251101 | claude-sonnet-4-6 | claude-sonnet-4-5@20250929 | claude-haiku-4-5@20251001 |
-| foundry | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
+| teams/direct | claude-opus-5-5 | claude-opus-4-5-20251101 | claude-sonnet-5-5 | claude-sonnet-4-5-20250929 | claude-haiku-5-5 |
+| bedrock | us.anthropic.claude-opus-5-5 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-5-5 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-5-5 |
+| vertex | claude-opus-5-5 | claude-opus-4-5@20251101 | claude-sonnet-5-5 | claude-sonnet-4-5@20250929 | claude-haiku-5-5 |
+| foundry | claude-opus-5-5 | claude-opus-4-5-20251101 | claude-sonnet-5-5 | claude-sonnet-4-5-20250929 | claude-haiku-5-5 |
 
 ## Provider Env Vars
 

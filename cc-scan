@@ -44,36 +44,36 @@ HEADER_BG = "\033[48;5;236m"
 
 # ── Model definitions ────────────────────────────────────────────────────────
 
-TIERS = ["Opus 4.6", "Opus 4.5", "Sonnet 4.6", "Sonnet 4.5", "Haiku 4.5"]
+TIERS = ["Opus 5.5", "Opus 4.5", "Sonnet 5.5", "Sonnet 4.5", "Haiku 5.5"]
 
 MODELS = {
     "direct": {
-        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 5.5":   "claude-opus-5-5",
         "Opus 4.5":   "claude-opus-4-5-20251101",
-        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 5.5": "claude-sonnet-5-5",
         "Sonnet 4.5": "claude-sonnet-4-5-20250929",
-        "Haiku 4.5":  "claude-haiku-4-5-20251001",
+        "Haiku 5.5":  "claude-haiku-5-5",
     },
     "bedrock": {
-        "Opus 4.6":   "us.anthropic.claude-opus-4-6-v1",
+        "Opus 5.5":   "us.anthropic.claude-opus-5-5",
         "Opus 4.5":   "us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "Sonnet 4.6": "us.anthropic.claude-sonnet-4-6",
+        "Sonnet 5.5": "us.anthropic.claude-sonnet-5-5",
         "Sonnet 4.5": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-        "Haiku 4.5":  "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "Haiku 5.5":  "us.anthropic.claude-haiku-5-5",
     },
     "vertex": {
-        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 5.5":   "claude-opus-5-5",
         "Opus 4.5":   "claude-opus-4-5@20251101",
-        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 5.5": "claude-sonnet-5-5",
         "Sonnet 4.5": "claude-sonnet-4-5@20250929",
-        "Haiku 4.5":  "claude-haiku-4-5@20251001",
+        "Haiku 5.5":  "claude-haiku-5-5",
     },
     "foundry": {
-        "Opus 4.6":   "claude-opus-4-6",
+        "Opus 5.5":   "claude-opus-5-5",
         "Opus 4.5":   "claude-opus-4-5-20251101",
-        "Sonnet 4.6": "claude-sonnet-4-6",
+        "Sonnet 5.5": "claude-sonnet-5-5",
         "Sonnet 4.5": "claude-sonnet-4-5-20250929",
-        "Haiku 4.5":  "claude-haiku-4-5-20251001",
+        "Haiku 5.5":  "claude-haiku-5-5",
     },
 }
 # teams uses same IDs as direct

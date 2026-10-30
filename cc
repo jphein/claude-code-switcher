@@ -13,9 +13,9 @@ mkdir -p "$CONFIG_DIR"
 # ── Model IDs per provider ───────────────────────────────────────────────────
 _opus_model() {
   case "${1:-direct}" in
-    bedrock) echo "us.anthropic.claude-opus-4-6-v1" ;;
-    vertex)  echo "claude-opus-4-6" ;;
-    *)       echo "claude-opus-4-6" ;;   # direct, foundry
+    bedrock) echo "us.anthropic.claude-opus-5-5" ;;  # Invoke API cross-region inference profile
+    vertex)  echo "claude-opus-5-5" ;;
+    *)       echo "claude-opus-5-5" ;;   # direct, foundry
   esac
 }
 
@@ -29,9 +29,9 @@ _opus45_model() {
 
 _sonnet_model() {
   case "${1:-direct}" in
-    bedrock) echo "us.anthropic.claude-sonnet-4-6" ;;
-    vertex)  echo "claude-sonnet-4-6" ;;
-    *)       echo "claude-sonnet-4-6" ;;  # direct, foundry
+    bedrock) echo "us.anthropic.claude-sonnet-5-5" ;;
+    vertex)  echo "claude-sonnet-5-5" ;;
+    *)       echo "claude-sonnet-5-5" ;;  # direct, foundry
   esac
 }
 
@@ -45,9 +45,9 @@ _sonnet45_model() {
 
 _haiku_model() {
   case "${1:-direct}" in
-    bedrock) echo "us.anthropic.claude-haiku-4-5-20251001-v1:0" ;;
-    vertex)  echo "claude-haiku-4-5@20251001" ;;
-    *)       echo "claude-haiku-4-5-20251001" ;;  # direct, foundry
+    bedrock) echo "us.anthropic.claude-haiku-5-5" ;;
+    vertex)  echo "claude-haiku-5-5" ;;
+    *)       echo "claude-haiku-5-5" ;;  # direct, foundry
   esac
 }
 
@@ -247,7 +247,7 @@ _check() {
       -H "x-api-key: ${ANTHROPIC_API_KEY}" \
       -H "anthropic-version: 2023-06-01" \
       -H "content-type: application/json" \
-      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+      -d '{"model":"'"$(_opus_model direct)"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
     names+=("direct"); statuses+=("$code")
   else
     names+=("direct"); statuses+=("skip:No API key")
@@ -258,7 +258,7 @@ _check() {
     local body tmpfile="/tmp/cc-check-bedrock.json"
     body=$(echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' | base64 -w0)
     if aws bedrock-runtime invoke-model --region us-west-1 \
-      --model-id us.anthropic.claude-opus-4-6-v1 \
+      --model-id "$(_opus_model bedrock)" \
       --content-type "application/json" --accept "application/json" \
       --body "$body" "$tmpfile" >/dev/null 2>&1; then
       names+=("bedrock"); statuses+=("200")
@@ -277,7 +277,7 @@ _check() {
   if [[ -n "$vtx_token" && -n "$vtx_project" ]]; then
     local vtx_region="us-east5"
     local vtx_model code
-    for vtx_model in claude-opus-4-6 claude-sonnet-4-6 claude-opus-4-5@20251101 claude-haiku-4-5@20251001; do
+    for vtx_model in "$(_opus_model vertex)" "$(_sonnet_model vertex)" "$(_haiku_model vertex)"; do
       code=$(_probe_http \
         "https://${vtx_region}-aiplatform.googleapis.com/v1/projects/${vtx_project}/locations/${vtx_region}/publishers/anthropic/models/${vtx_model}:streamRawPredict" \
         -H "Authorization: Bearer ${vtx_token}" \
@@ -297,7 +297,7 @@ _check() {
     code=$(_probe_http "${fnd_endpoint}" \
       -H "api-key: ${fnd_key}" \
       -H "content-type: application/json" \
-      -d '{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
+      -d '{"model":"'"$(_opus_model foundry)"'","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}')
     names+=("foundry"); statuses+=("$code")
   else
     names+=("foundry"); statuses+=("skip:No endpoint/key")
@@ -564,9 +564,9 @@ _status() {
   esac
   echo "  ║  Model    : ${model}"
   case "$model" in
-    *opus-4-5*)   echo "  ║  ⚡ Opus 4.5 fallback — run: cc opus" ;;
-    *sonnet-4-5*) echo "  ║  ⚡ Sonnet 4.5 fallback — run: cc opus" ;;
-    *sonnet*)     echo "  ║  ⚡ Sonnet 4.6 fallback — run: cc opus" ;;
+    *opus-4-5*)   echo "  ║  ⚡ Opus 4.5 (legacy) — run: cc opus" ;;
+    *sonnet-4-5*) echo "  ║  ⚡ Sonnet 4.5 (legacy, retires 2026-11-30) — run: cc opus" ;;
+    *sonnet*)     echo "  ║  ⚡ Sonnet fallback — run: cc opus" ;;
     *haiku*)      echo "  ║  ⚡ Haiku fallback — run: cc opus" ;;
   esac
   echo "  ╚═════════════════════════════════════════╝"
@@ -660,35 +660,35 @@ EOF
     provider=$(_active)
     model=$(_opus_model "$provider")
     _set_model "$model"
-    echo "  → Opus 4.6 on $(_active)"
+    echo "  → Opus 5.5 on $(_active)"
     ;;
 
   opus45)
     provider=$(_active)
     model=$(_opus45_model "$provider")
     _set_model "$model"
-    echo "  → Opus 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    echo "  → Opus 4.5 (legacy) on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
   sonnet)
     provider=$(_active)
     model=$(_sonnet_model "$provider")
     _set_model "$model"
-    echo "  → Sonnet 4.6 on ${provider}  (open new Claude Code session to take effect)"
+    echo "  → Sonnet 5.5 on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
   sonnet45)
     provider=$(_active)
     model=$(_sonnet45_model "$provider")
     _set_model "$model"
-    echo "  → Sonnet 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    echo "  → Sonnet 4.5 (legacy, retires 2026-11-30) on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
   haiku)
     provider=$(_active)
     model=$(_haiku_model "$provider")
     _set_model "$model"
-    echo "  → Haiku 4.5 on ${provider}  (open new Claude Code session to take effect)"
+    echo "  → Haiku 5.5 on ${provider}  (open new Claude Code session to take effect)"
     ;;
 
   check)
@@ -784,11 +784,13 @@ EOF
     echo "    cc ollama MODEL  Switch + set model (e.g. cc ollama deepseek-r1:70b)"
     echo ""
     echo "  MODEL TIER  (within current provider)"
-    echo "    cc opus       Opus 4.6   — primary"
-    echo "    cc opus45     Opus 4.5   — fallback when 4.6 rate-limited"
-    echo "    cc sonnet     Sonnet 4.6 — fast + capable"
-    echo "    cc sonnet45   Sonnet 4.5 — extended thinking"
-    echo "    cc haiku      Haiku 4.5  — fastest, cheapest"
+    echo "    cc opus       Opus 5.5   — primary"
+    echo "    cc opus45     Opus 4.5   — legacy fallback"
+    echo "    cc sonnet     Sonnet 5.5 — fast + capable"
+    echo "    cc sonnet45   Sonnet 4.5 — legacy; the Claude API retires it 2026-11-30"
+    echo "    cc haiku      Haiku 5.5  — fastest, cheapest"
+    echo ""
+    echo "  Fast mode (/fast in Claude Code) is Opus-only: Opus 5.5 from v2.1.280; Opus 4.8 fast mode ends 2026-11-30."
     echo ""
     echo "  ACCOUNTS  (multi-account Teams rotation)"
     echo "    cc setup-accounts   Set up multiple Teams accounts"

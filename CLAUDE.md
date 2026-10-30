@@ -27,7 +27,8 @@ CLI tool for switching Claude Code between API providers, model tiers, and Teams
 ## Provider Model IDs
 Model IDs vary by provider. The `_opus_model`, `_opus45_model`, `_sonnet_model`, `_sonnet45_model`, `_haiku_model` functions in `cc` handle the mapping. Key differences:
 - **bedrock**: `us.anthropic.` prefix, version suffixes like `-v1` or `-v1:0`
-- **vertex**: `@` instead of `-` for date versions (e.g. `claude-opus-4-5@20251101`)
+- **vertex**: `@` instead of `-` for date versions (e.g. `claude-opus-4-5@20251101`); dateless IDs (4.6 and later, e.g. `claude-opus-5-5`) are the same as first-party
+- **Tiers (2026-10-30)**: `opus`/`sonnet`/`haiku` = the 5.5 models; `opus45`/`sonnet45` are legacy pins (the Claude API retires Sonnet 4.5 on 2026-11-30). Bedrock Sonnet/Haiku 5.5 inference-profile IDs follow the documented Opus 5.5 pattern (`us.anthropic.claude-opus-5-5`); they have not been checked against a live account
 - **direct/foundry/teams**: Standard Anthropic IDs
 - **ollama**: User-specified model names (e.g. `qwen3-coder`, `deepseek-r1:70b`). Tier mapping via `ANTHROPIC_DEFAULT_*_MODEL` env vars
 
@@ -37,8 +38,8 @@ When Claude Code encounters API errors, use `cc` to switch providers or models:
 
 ### Rate Limit (429 / overloaded)
 ```bash
-cc opus45    # Fall back to Opus 4.5
-cc sonnet    # Or switch to Sonnet 4.6 for speed
+cc opus45    # Fall back to Opus 4.5 (legacy)
+cc sonnet    # Or switch to Sonnet 5.5 for speed
 cc bedrock   # Or switch entire provider
 ```
 
