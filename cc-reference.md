@@ -30,7 +30,7 @@ cc haiku            Haiku 5.5  -- fastest, cheapest
 
 cc help             Show built-in help
 cc-test             Run local state tests (55 checks)
-cc-api-test         Test actual API connectivity per provider
+cc-api-test --paid  Test actual API connectivity per provider (bills)
 ```
 
 ## Rate-Limit Workflow

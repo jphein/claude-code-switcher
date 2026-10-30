@@ -8,6 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CC="${SCRIPT_DIR}/cc"
 ENV_FILE="${HOME}/.config/claude-code/env.sh"
 
+# Every provider test is a real one-token request that bills; run only with --paid (before touching any state).
+if [[ "${1:-}" != "--paid" ]]; then
+  echo "  skipped: paid probe, run \`cc-api-test --paid\`"
+  echo "  paid probes bill real money"
+  exit 0
+fi
+
 # Snapshot current state
 ORIGINAL_ACTIVE=$(cat ~/.config/claude-code/active-backend 2>/dev/null || echo "teams")
 ORIGINAL_MODEL=$(python3 -c "import json; print(json.load(open('${HOME}/.claude/settings.json'))['model'])" 2>/dev/null || echo "")
@@ -121,11 +128,13 @@ echo "cc-api-test — testing provider connectivity"
 echo "────────────────────────────────────────────────────"
 
 # Test each provider with default opus model
-test_provider "teams"   "claude-opus-4-6"
-test_provider "direct"  "claude-opus-4-6"
-test_provider "bedrock" "us.anthropic.claude-opus-4-6-v1"
-test_provider "vertex"  "claude-opus-4-6"
-test_provider "foundry" "claude-opus-4-6"
+# Model IDs come from cc's tier map (cc's functions, not a second copy)
+eval "$(sed -n '/^_opus_model()/,/^}/p' "$CC")"
+test_provider "teams"   "$(_opus_model direct)"
+test_provider "direct"  "$(_opus_model direct)"
+test_provider "bedrock" "$(_opus_model bedrock)"
+test_provider "vertex"  "$(_opus_model vertex)"
+test_provider "foundry" "$(_opus_model foundry)"
 
 # Restore original state
 echo ""

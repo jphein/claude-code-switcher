@@ -818,7 +818,7 @@ EOF
     echo "    cc status     Same as above"
     echo "    cc check      Test connectivity (free probes: teamclaude, ollama)"
     echo "    cc check --paid   Also probe direct/bedrock/vertex/foundry — paid probes bill real money"
-    echo "    cc scan       Claude model matrix (5 tiers × 5 providers)"
+    echo "    cc scan --paid    Claude model matrix (5 tiers × 5 providers) — paid probes bill real money"
     echo "    cc version    Show version"
     echo ""
     echo "  RATE LIMIT WORKFLOW"
