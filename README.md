@@ -57,11 +57,13 @@ cc-test             Run local state tests (55 checks)
 cc-api-test         Test actual API connectivity per provider
 ```
 
-### ⚠️ `cc check`, `cc scan`, `cc-scan` and `cc-api-test` cost money: agents must not run them
+### ⚠️ `cc check --paid`, `cc scan`, `cc-scan` and `cc-api-test` cost money: agents must not run them
+
+Since 2026-10-30 plain `cc check` probes only the free targets (the teamclaude status endpoint and local Ollama) and shows `skipped: paid probe, run \`cc check --paid\`` for any paid provider it has credentials for. Only `cc check --paid` sends the requests described below. `cc scan`, `cc-scan` and `cc-api-test` have no such guard yet.
 
 Each of these sends a real one-token request ("hi", `max_tokens: 1`) to every configured provider. On Bedrock that bills as AWS Marketplace with the default AWS credentials (`aws bedrock-runtime invoke-model … us.anthropic.claude-opus-5-5`), which promotional credits never cover. In October 2026 a loop of such probes billed Opus 4.6 on realm-cloud on two days: about 551 calls on 10-28 and about 58 on 10-29, seen as roughly 12 input tokens per output token in Cost Explorer.
 
-- **Agents, status lines, prompts, cron jobs and timers:** never run `cc check`, `cc scan`, `cc-scan` or `cc-api-test`. To learn the active provider, read `~/.config/claude-code/active-backend` (and the model from `~/.config/claude-code/env.sh`), or run `cc status`, which reads local files only and makes no network call.
+- **Agents, status lines, prompts, cron jobs and timers:** never run `cc check --paid`, `cc scan`, `cc-scan` or `cc-api-test`. To learn the active provider, read `~/.config/claude-code/active-backend` (and the model from `~/.config/claude-code/env.sh`), or run `cc status`, which reads local files only and makes no network call.
 - **People:** run them by hand only, one at a time, when you are actually debugging a provider.
 
 ## Scan — Model Availability Matrix

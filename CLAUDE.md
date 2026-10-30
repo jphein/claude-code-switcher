@@ -45,7 +45,7 @@ cc bedrock   # Or switch entire provider
 
 ### Auth Failure (401/403)
 ```bash
-cc check     # Diagnose which providers are working
+cc check     # Diagnose (free probes only; `cc check --paid` bills real money, never from an agent)
 cc scan      # Full matrix of model availability
 cc teams     # Switch to Teams (OAuth, always works)
 ```
