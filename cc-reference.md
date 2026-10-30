@@ -22,11 +22,11 @@ cc bedrock          Amazon Bedrock (us-west-1)
 cc vertex           Google Vertex AI (us-east5)
 cc foundry          Azure AI Foundry
 
-cc opus             Opus 4.6   -- primary
-cc opus45           Opus 4.5   -- fallback when 4.6 rate-limited
-cc sonnet           Sonnet 4.6 -- fast + capable
-cc sonnet45         Sonnet 4.5 -- extended thinking
-cc haiku            Haiku 4.5  -- fastest, cheapest
+cc opus             Opus 5.5   -- primary
+cc opus45           Opus 4.5   -- legacy fallback
+cc sonnet           Sonnet 5.5 -- fast + capable
+cc sonnet45         Sonnet 4.5 -- legacy; Claude API retires it 2026-11-30
+cc haiku            Haiku 5.5  -- fastest, cheapest
 
 cc help             Show built-in help
 cc-test             Run local state tests (55 checks)
@@ -74,12 +74,12 @@ Back to primary?   -->  cc opus    -->  open new session
 
 ## Model IDs by Provider
 
-| Provider | Opus 4.6 | Opus 4.5 | Sonnet 4.6 | Sonnet 4.5 | Haiku 4.5 |
+| Provider | Opus 5.5 | Opus 4.5 | Sonnet 5.5 | Sonnet 4.5 | Haiku 5.5 |
 |----------|----------|----------|------------|------------|-----------|
-| teams/direct | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
-| bedrock | us.anthropic.claude-opus-4-6-v1 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-4-6-v1 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-4-5-20251001-v1:0 |
-| vertex | claude-opus-4-6 | claude-opus-4-5@20251101 | claude-sonnet-4-6 | claude-sonnet-4-5@20250929 | claude-haiku-4-5@20251001 |
-| foundry | claude-opus-4-6 | claude-opus-4-5-20251101 | claude-sonnet-4-6 | claude-sonnet-4-5-20250929 | claude-haiku-4-5-20251001 |
+| teams/direct | claude-opus-5-5 | claude-opus-4-5-20251101 | claude-sonnet-5-5 | claude-sonnet-4-5-20250929 | claude-haiku-5-5 |
+| bedrock | us.anthropic.claude-opus-5-5 | us.anthropic.claude-opus-4-5-20251101-v1:0 | us.anthropic.claude-sonnet-5-5 | us.anthropic.claude-sonnet-4-5-20250929-v1:0 | us.anthropic.claude-haiku-5-5 |
+| vertex | claude-opus-5-5 | claude-opus-4-5@20251101 | claude-sonnet-5-5 | claude-sonnet-4-5@20250929 | claude-haiku-5-5 |
+| foundry | claude-opus-5-5 | claude-opus-4-5-20251101 | claude-sonnet-5-5 | claude-sonnet-4-5-20250929 | claude-haiku-5-5 |
 
 ## Provider Env Vars
 

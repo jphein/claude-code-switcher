@@ -148,15 +148,15 @@ check "active-backend still direct"     "direct"                         "$(acti
 echo ""
 echo "[ model IDs on bedrock ]"
 "$CC" bedrock >/dev/null
-check "bedrock opus"                    "us.anthropic.claude-opus-4-6"   "$(model)"
+check "bedrock opus"                    "us.anthropic.claude-opus-5-5"   "$(model)"
 "$CC" opus45  >/dev/null
 check "bedrock opus45"                  "us.anthropic.claude-opus-4-5"   "$(model)"
 "$CC" sonnet  >/dev/null
-check "bedrock sonnet"                  "us.anthropic.claude-sonnet-4-6" "$(model)"
+check "bedrock sonnet"                  "us.anthropic.claude-sonnet-5-5" "$(model)"
 "$CC" sonnet45 >/dev/null
 check "bedrock sonnet45"                "us.anthropic.claude-sonnet-4-5" "$(model)"
 "$CC" haiku >/dev/null
-check "bedrock haiku"                   "us.anthropic.claude-haiku"      "$(model)"
+check "bedrock haiku"                   "us.anthropic.claude-haiku-5-5"  "$(model)"
 
 # -- model tiers on teams -----------------------------------------------------
 echo ""
@@ -166,11 +166,11 @@ echo "[ model tiers on teams ]"
 check "teams opus45"                    "claude-opus-4-5"                "$(model)"
 check "active-backend = teams"          "teams"                          "$(active)"
 "$CC" sonnet >/dev/null
-check "teams sonnet"                    "claude-sonnet-4-6"              "$(model)"
+check "teams sonnet"                    "claude-sonnet-5-5"              "$(model)"
 "$CC" haiku >/dev/null
-check "teams haiku"                     "claude-haiku-4-5"               "$(model)"
+check "teams haiku"                     "claude-haiku-5-5"               "$(model)"
 "$CC" opus >/dev/null
-check "teams opus"                      "claude-opus-4-6"                "$(model)"
+check "teams opus"                      "claude-opus-5-5"                "$(model)"
 
 # -- cc status ----------------------------------------------------------------
 echo ""
