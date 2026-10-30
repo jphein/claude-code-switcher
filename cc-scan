@@ -23,6 +23,14 @@ from configparser import ConfigParser
 from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
+# Every cell is a real one-token request that bills (Bedrock as AWS Marketplace); run only with --paid.
+# Checked before the httpx import so the refusal works on hosts without httpx too.
+if "--paid" not in sys.argv[1:]:
+    _cmd = "cc scan" if sys.argv[1:2] == ["scan"] else "cc-scan"
+    print(f"  skipped: paid probe, run `{_cmd} --paid`")
+    print("  paid probes bill real money")
+    sys.exit(0)
+
 try:
     import httpx
 except ImportError:

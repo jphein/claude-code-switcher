@@ -8,7 +8,7 @@ CLI tool for switching Claude Code between API providers, model tiers, and Teams
 - `cc-scan` — Python script. Tests all 5 models × 5 providers in parallel, renders color matrix. Requires `httpx`.
 - `cc-usage` — Python script. Checks usage/rate limits across multiple Teams accounts. Probes `api.anthropic.com/api/oauth/usage`. Requires `httpx`.
 - `cc-test` — Bash test suite (70 local state checks, no API calls).
-- `cc-api-test` — Original curl-based API test (superseded by `cc scan`).
+- `cc-api-test` — Original curl-based API test (superseded by `cc scan`). Paid: needs `--paid`, like `cc check`/`cc scan`/`cc-scan`.
 - `install.sh` — Adds project dir to PATH.
 
 ## State Files
@@ -46,13 +46,13 @@ cc bedrock   # Or switch entire provider
 ### Auth Failure (401/403)
 ```bash
 cc check     # Diagnose (free probes only; `cc check --paid` bills real money, never from an agent)
-cc scan      # Full matrix of model availability
+cc scan --paid  # Full matrix of model availability (bills; people only)
 cc teams     # Switch to Teams (OAuth, always works)
 ```
 
 ### Model Not Available (404)
 ```bash
-cc scan      # See which models are available where
+cc scan --paid  # See which models are available where (bills; people only)
 cc bedrock   # Bedrock typically has all models
 ```
 

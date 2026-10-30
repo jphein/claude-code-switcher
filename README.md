@@ -43,8 +43,8 @@ cc sonnet           Sonnet 5.5 -- fast + capable
 cc sonnet45         Sonnet 4.5 -- legacy; Claude API retires it 2026-11-30
 cc haiku            Haiku 5.5  -- fastest, cheapest
 
-cc check            Test connectivity for all providers
-cc scan             Full model matrix — test all 5 models × 5 providers
+cc check            Test connectivity (free probes; --paid adds paid providers)
+cc scan --paid      Full model matrix — test all 5 models × 5 providers (bills)
 cc help             Show built-in help
 
 cc setup-teams      Info on Claude Teams OAuth
@@ -54,21 +54,21 @@ cc setup-vertex     Authenticate with Google Cloud
 cc setup-foundry    Configure Azure AI Foundry
 
 cc-test             Run local state tests (55 checks)
-cc-api-test         Test actual API connectivity per provider
+cc-api-test --paid  Test actual API connectivity per provider (bills)
 ```
 
-### ⚠️ `cc check --paid`, `cc scan`, `cc-scan` and `cc-api-test` cost money: agents must not run them
+### ⚠️ Only `--paid` spends money: `cc check --paid`, `cc scan --paid`, `cc-scan --paid`, `cc-api-test --paid`
 
-Since 2026-10-30 plain `cc check` probes only the free targets (the teamclaude status endpoint and local Ollama) and shows `skipped: paid probe, run \`cc check --paid\`` for any paid provider it has credentials for. Only `cc check --paid` sends the requests described below. `cc scan`, `cc-scan` and `cc-api-test` have no such guard yet.
+Nothing in this repo spends money unless you type `--paid` (since 2026-10-30). Without it, `cc check` probes only the free targets (the teamclaude status endpoint and local Ollama) and shows `skipped: paid probe, run \`cc check --paid\`` for each paid provider it has credentials for. `cc scan`, `cc-scan` and `cc-api-test` print the same `skipped: paid probe, run \`<command> --paid\`` and exit before sending anything. `cc-test` asserts all four refusals with a dummy key.
 
-Each of these sends a real one-token request ("hi", `max_tokens: 1`) to every configured provider. On Bedrock that bills as AWS Marketplace with the default AWS credentials (`aws bedrock-runtime invoke-model … us.anthropic.claude-opus-5-5`), which promotional credits never cover. In October 2026 a loop of such probes billed Opus 4.6 on realm-cloud on two days: about 551 calls on 10-28 and about 58 on 10-29, seen as roughly 12 input tokens per output token in Cost Explorer.
+With `--paid`, each one sends a real one-token request ("hi", `max_tokens: 1`) to every configured provider. On Bedrock that bills as AWS Marketplace with the default AWS credentials (`aws bedrock-runtime invoke-model … us.anthropic.claude-opus-5-5`), which promotional credits never cover. In October 2026 a loop of such probes billed Opus 4.6 on realm-cloud on two days: about 551 calls on 10-28 and about 58 on 10-29, seen as roughly 12 input tokens per output token in Cost Explorer. That is why the guard exists.
 
-- **Agents, status lines, prompts, cron jobs and timers:** never run `cc check --paid`, `cc scan`, `cc-scan` or `cc-api-test`. To learn the active provider, read `~/.config/claude-code/active-backend` (and the model from `~/.config/claude-code/env.sh`), or run `cc status`, which reads local files only and makes no network call.
-- **People:** run them by hand only, one at a time, when you are actually debugging a provider.
+- **Agents, status lines, prompts, cron jobs and timers:** never pass `--paid`. To learn the active provider, read `~/.config/claude-code/active-backend` (and the model from `~/.config/claude-code/env.sh`), or run `cc status`, which reads local files only and makes no network call.
+- **People:** pass `--paid` by hand only, one run at a time, when you are actually debugging a provider.
 
 ## Scan — Model Availability Matrix
 
-`cc scan` tests every Claude model against every provider in parallel and shows a color-coded matrix:
+`cc scan --paid` tests every Claude model against every provider in parallel and shows a color-coded matrix:
 
 ```
   cc scan — Claude Model Availability Matrix

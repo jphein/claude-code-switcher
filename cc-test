@@ -217,6 +217,14 @@ echo "[ cc scan ]"
 [[ -x "${SCRIPT_DIR}/cc-scan" ]] && ok "cc-scan is executable" || fail "cc-scan not executable"
 HELP_OUT=$("$CC" help 2>&1)
 check "help mentions cc scan"  "cc scan"  "$HELP_OUT"
+# cc scan / cc-scan / cc-api-test send nothing without --paid (dummy key; a dead proxy catches any slip)
+SCAN_OUT=$(ANTHROPIC_API_KEY=sk-ant-dummy-not-a-key HTTPS_PROXY=http://127.0.0.1:9 "$CC" scan 2>&1)
+check "cc scan skips paid probes"      "skipped: paid probe, run \`cc scan --paid\`"      "$SCAN_OUT"
+SCAN2_OUT=$(ANTHROPIC_API_KEY=sk-ant-dummy-not-a-key HTTPS_PROXY=http://127.0.0.1:9 /usr/bin/python3 "${SCRIPT_DIR}/cc-scan" 2>&1)
+check "cc-scan skips paid probes"      "skipped: paid probe, run \`cc-scan --paid\`"      "$SCAN2_OUT"
+API_OUT=$(ANTHROPIC_API_KEY=sk-ant-dummy-not-a-key HTTPS_PROXY=http://127.0.0.1:9 bash "${SCRIPT_DIR}/cc-api-test" 2>&1)
+check "cc-api-test skips paid probes"  "skipped: paid probe, run \`cc-api-test --paid\`"  "$API_OUT"
+check "help: cc scan --paid warns"     "cc scan --paid"                                     "$HELP_OUT"
 
 # -- cc <unknown> -------------------------------------------------------------
 echo ""
