@@ -223,6 +223,11 @@ _status_label() {
 }
 
 _check() {
+  # Paid providers (direct, bedrock, vertex, foundry) send a real one-token request that bills; probe them only
+  # with --paid. A Bedrock probe loop billed real money in 2026-10 (claude-code-switcher PR 6, fleet rule).
+  local paid=0; [[ "${1:-}" == "--paid" ]] && paid=1
+  local paid_skip='skip:skipped: paid probe, run `cc check --paid`'
+  local skipped_paid=0
   # Collect results into arrays
   local names=() statuses=()
 
@@ -241,7 +246,9 @@ _check() {
   names+=("teamclaude"); statuses+=("$code")
 
   # direct
-  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  if [[ -n "${ANTHROPIC_API_KEY:-}" && $paid == 0 ]]; then
+    names+=("direct"); statuses+=("$paid_skip"); skipped_paid=1
+  elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     local code
     code=$(_probe_http https://api.anthropic.com/v1/messages \
       -H "x-api-key: ${ANTHROPIC_API_KEY}" \
@@ -254,7 +261,9 @@ _check() {
   fi
 
   # bedrock
-  if command -v aws &>/dev/null; then
+  if command -v aws &>/dev/null && [[ $paid == 0 ]]; then
+    names+=("bedrock"); statuses+=("$paid_skip"); skipped_paid=1
+  elif command -v aws &>/dev/null; then
     local body tmpfile="/tmp/cc-check-bedrock.json"
     body=$(echo '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' | base64 -w0)
     if aws bedrock-runtime invoke-model --region us-west-1 \
@@ -274,7 +283,9 @@ _check() {
   local vtx_token vtx_project
   vtx_token=$("$GCLOUD" auth print-access-token 2>/dev/null || echo "")
   vtx_project=$("$GCLOUD" config get-value project 2>/dev/null || echo "")
-  if [[ -n "$vtx_token" && -n "$vtx_project" ]]; then
+  if [[ -n "$vtx_token" && -n "$vtx_project" && $paid == 0 ]]; then
+    names+=("vertex"); statuses+=("$paid_skip"); skipped_paid=1
+  elif [[ -n "$vtx_token" && -n "$vtx_project" ]]; then
     local vtx_region="us-east5"
     local vtx_model code
     for vtx_model in "$(_opus_model vertex)" "$(_sonnet_model vertex)" "$(_haiku_model vertex)"; do
@@ -292,7 +303,9 @@ _check() {
   # foundry
   local fnd_endpoint="${AZURE_FOUNDRY_ENDPOINT:-${ANTHROPIC_BASE_URL:-}}"
   local fnd_key="${AZURE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
-  if [[ -n "$fnd_endpoint" && -n "$fnd_key" ]]; then
+  if [[ -n "$fnd_endpoint" && -n "$fnd_key" && $paid == 0 ]]; then
+    names+=("foundry"); statuses+=("$paid_skip"); skipped_paid=1
+  elif [[ -n "$fnd_endpoint" && -n "$fnd_key" ]]; then
     local code
     code=$(_probe_http "${fnd_endpoint}" \
       -H "api-key: ${fnd_key}" \
@@ -314,7 +327,7 @@ _check() {
   names+=("ollama"); statuses+=("$code")
 
   # Render table
-  local nw=28 sw=32
+  local nw=28 sw=46
   echo ""
   printf "  ┌─%-${nw}s─┬─%-${sw}s─┐\n" "$(printf '%0.s─' $(seq 1 $nw))" "$(printf '%0.s─' $(seq 1 $sw))"
   printf "  │ %-${nw}s │ %-${sw}s │\n" "Provider" "Status"
@@ -326,6 +339,7 @@ _check() {
     printf "  │ %-${nw}s │ %-${sw}s │\n" "${names[$i]}" "$label"
   done
   printf "  └─%-${nw}s─┴─%-${sw}s─┘\n" "$(printf '%0.s─' $(seq 1 $nw))" "$(printf '%0.s─' $(seq 1 $sw))"
+  [[ $skipped_paid == 1 ]] && echo "  cc check --paid also probes direct/bedrock/vertex/foundry — paid probes bill real money"
   echo ""
 }
 
@@ -579,7 +593,7 @@ _status() {
 
 _status_full() {
   _status
-  _check
+  _check "${@}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -692,7 +706,7 @@ EOF
     ;;
 
   check)
-    _check
+    _check "${2:-}"
     ;;
 
   setup-bedrock)
@@ -802,7 +816,8 @@ EOF
     echo "  INFO"
     echo "    cc            Show current provider + model"
     echo "    cc status     Same as above"
-    echo "    cc check      Test connectivity for all providers"
+    echo "    cc check      Test connectivity (free probes: teamclaude, ollama)"
+    echo "    cc check --paid   Also probe direct/bedrock/vertex/foundry — paid probes bill real money"
     echo "    cc scan       Claude model matrix (5 tiers × 5 providers)"
     echo "    cc version    Show version"
     echo ""

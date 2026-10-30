@@ -204,6 +204,12 @@ check "shows teams"    "teams"    "$CHECK_OUT"
 check "shows bedrock"  "bedrock"  "$CHECK_OUT"
 check "shows vertex"   "vertex"   "$CHECK_OUT"
 check "shows ollama"   "ollama"   "$CHECK_OUT"
+# paid providers are skipped without --paid (a dummy key must not be sent anywhere)
+CHECK_PAID_OUT=$(ANTHROPIC_API_KEY=sk-ant-dummy-not-a-key "$CC" check 2>&1)
+check "check skips paid direct probe"  "skipped: paid probe, run \`cc check --paid\`"  "$CHECK_PAID_OUT"
+check "check warns paid bills money"   "paid probes bill real money"                   "$CHECK_PAID_OUT"
+HELP_PAID=$("$CC" help 2>&1)
+check "help shows cc check --paid"     "cc check --paid"                               "$HELP_PAID"
 
 # -- cc scan (offline checks) ------------------------------------------------
 echo ""
