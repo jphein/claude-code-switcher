@@ -7,7 +7,8 @@ CLI tool for switching Claude Code between API providers, model tiers, and Teams
 - `cc` — Main bash script (795 lines). Provider switches (incl. Ollama), model tier changes, multi-account management, setup wizards, status, check, help.
 - `cc-scan` — Python script. Tests all 5 models × 5 providers in parallel, renders color matrix. Requires `httpx`.
 - `cc-usage` — Python script. Checks usage/rate limits across multiple Teams accounts. Probes `api.anthropic.com/api/oauth/usage`. Requires `httpx`.
-- `cc-test` — Bash test suite (70 local state checks, no API calls).
+- `cc-test` — Bash test suite (70 local state checks, no API calls). It writes the real `~/.config/claude-code` and `~/.claude/settings.json`: run it only on a host whose provider you mean to reset.
+- `tests/test-no-key-in-env.sh` — `cc teamclaude` never writes a proxy client key or URL userinfo into env.sh; the host's loopback forwarder (127.0.0.1:3456) holds the key. Runs in a throwaway HOME.
 - `cc-api-test` — Original curl-based API test (superseded by `cc scan`). Paid: needs `--paid`, like `cc check`/`cc scan`/`cc-scan`.
 - `install.sh` — Adds project dir to PATH.
 
