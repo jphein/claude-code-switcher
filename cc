@@ -180,29 +180,25 @@ _write_env() {
   chmod 600 "$ENV_FILE"
 }
 
-# Remote teamclaude (2026-10-02): when ${CONFIG_DIR}/teamclaude-remote.env exists
-# (TC_REMOTE=host:port, TC_KEY=<proxy clientKey>), point the generated env at that
-# LAN service instead of 127.0.0.1:3456. The key rides as the proxy username
-# (teamclaude reads Proxy-Authorization Basic <key>:). Without the file: unchanged.
-# 2026-10-27: TC_SCHEME=https reaches the proxy's TLS listener (port 3443), so the
-# key no longer crosses the LAN in clear; TC_CA names the CA bundle to trust
-# (the listener CA and the MITM CA together — the proxy's teamclaude-ca-bundle.pem).
+# Remote teamclaude (2026-10-02 to 2026-11-20): cc used to rewrite the loopback URL to
+# scheme://TC_KEY@TC_REMOTE from ${CONFIG_DIR}/teamclaude-remote.env, which put a proxy client key
+# in env.sh and so in every process env (katana leak 2026-11-17). Since 2026-11-06 every client
+# host runs its own forwarder on 127.0.0.1:3456 that holds its key in a 0600 file, so env.sh keeps
+# the loopback form and never carries a key or any URL userinfo. A remote.env left on a host is
+# ignored except TC_CA (a CA bundle path, not a secret), and env.sh says so.
 _tc_remote_rewrite() {
   local f="${CONFIG_DIR}/teamclaude-remote.env"
   if [[ -f "$f" ]]; then
-    local TC_REMOTE TC_KEY TC_SCHEME TC_CA; source "$f"
-    local scheme="${TC_SCHEME:-http}"
-    if [[ "$scheme" != http && "$scheme" != https ]]; then
-      echo "# WARNING: TC_SCHEME must be http or https (got '${scheme}'); using http"
-      scheme=http
+    local TC_CA
+    TC_CA=$(sed -n 's/^TC_CA=//p' "$f" | tail -1 | tr -d "\"'")
+    echo "# ${f} is ignored: the local forwarder on 127.0.0.1:3456 holds the key (no key in env.sh)"
+    if [[ -n "$TC_CA" && "$TC_CA" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+      sed -e "s#^export NODE_EXTRA_CA_CERTS=.*#export NODE_EXTRA_CA_CERTS=${TC_CA}#" -e 's#://[^/@ ]*@#://#g'
+    else
+      sed -e 's#://[^/@ ]*@#://#g'
     fi
-    local ca_rule=()
-    [[ -n "${TC_CA:-}" ]] && ca_rule=(-e "s#^export NODE_EXTRA_CA_CERTS=.*#export NODE_EXTRA_CA_CERTS=${TC_CA}#")
-    sed -e "s#http://127\.0\.0\.1:3456#${scheme}://${TC_KEY}@${TC_REMOTE}#g" \
-        -e "s#http://localhost:3456#${scheme}://${TC_REMOTE}#g" \
-        "${ca_rule[@]}"
   else
-    cat
+    sed -e 's#://[^/@ ]*@#://#g'
   fi
 }
 
@@ -237,12 +233,8 @@ _check() {
   # teamclaude — probe the control endpoint (works for both reverse-proxy and MITM)
   local tc_port=3456
   local code
-  if [[ -f "${CONFIG_DIR}/teamclaude-remote.env" ]]; then
-    local TC_REMOTE TC_KEY; source "${CONFIG_DIR}/teamclaude-remote.env"
-    code=$(_probe_http -H "x-api-key: ${TC_KEY}" "http://${TC_REMOTE}/teamclaude/status")
-  else
-    code=$(_probe_http "http://localhost:${tc_port}/teamclaude/status")
-  fi
+  # the local forwarder answers for the remote proxy; no key is sent from here (row d3d3cc19)
+  code=$(_probe_http "http://localhost:${tc_port}/teamclaude/status")
   names+=("teamclaude"); statuses+=("$code")
 
   # direct
